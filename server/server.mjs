@@ -120,6 +120,10 @@ function findAgent(token) {
 
 const TIERS = ['normal', 'warning', 'emergency']
 
+// landing page (served at GET /) — optional, hub works without it
+let HOMEPAGE = null
+try { HOMEPAGE = fs.readFileSync(new URL('./index.html', import.meta.url), 'utf8') } catch { /* absent */ }
+
 // ---------- SSE ----------
 
 /** @type {Set<{res: http.ServerResponse, agentId: string}>} */
@@ -146,6 +150,10 @@ async function handle(req, res) {
 
   // public
   if (route === 'GET /health') return json(res, 200, { ok: true, open: !ADMIN_KEY, agents: db.agents.filter(a => !a.revoked).length, messages: db.messages.length })
+  if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD') && HOMEPAGE) {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' })
+    return res.end(req.method === 'HEAD' ? undefined : HOMEPAGE)
+  }
 
   // ----- token management (admin-gated only when ADMIN_KEY is set) -----
   if (url.pathname === '/tokens' || url.pathname.startsWith('/tokens/')) {
