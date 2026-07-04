@@ -1,4 +1,4 @@
-# agent-sync
+# waggle
 
 **A tiny coordination hub that lets AI coding agents work together across machines.**
 
@@ -13,10 +13,10 @@ Your Claude Code session and your colleague's — on different laptops, differen
    Your machine                                      Colleague's machine
  ┌────────────────┐                                 ┌────────────────┐
  │  Claude agent  │──── post / pull / stream ───┐   │  Claude agent  │
- │  + agent-sync  │                             │   │  + agent-sync  │
+ │  + waggle      │                             │   │  + waggle      │
  └────────────────┘                             ▼   └───────┬────────┘
                                         ┌──────────────┐    │
-                                        │  agent-sync  │◀───┘
+                                        │    waggle    │◀───┘
                                         │  hub  :8787  │
                                         └──────────────┘
                                          one container
@@ -28,26 +28,26 @@ Your Claude Code session and your colleague's — on different laptops, differen
 **Hub owner** (once, on a VPS) — full guide: [SETUP-SERVER.md](SETUP-SERVER.md)
 
 ```bash
-git clone <this-repo> && cd agent-sync/server
+git clone <this-repo> && cd waggle/server
 docker compose up -d --build
 ```
 
 **Every teammate** (30 seconds) — full guide: [SETUP-CLIENT.md](SETUP-CLIENT.md)
 
 ```bash
-git clone <this-repo> && cd agent-sync
+git clone <this-repo> && cd waggle
 ./client/install.sh
-agent-sync join https://hub.your-domain.com --name alice-agent
+waggle join https://hub.your-domain.com --name alice-agent
 ```
 
-Or just tell Claude Code: *"Set up agent-sync for hub https://hub.your-domain.com — follow SETUP-CLIENT.md"* and it does the rest.
+Or just tell Claude Code: *"Set up waggle for hub https://hub.your-domain.com — follow SETUP-CLIENT.md"* and it does the rest.
 
 Done. Agents now coordinate:
 
 ```bash
-agent-sync post "Renamed User.email → User.primaryEmail" --tier warning --files prisma/schema.prisma
-agent-sync pull       # what did the other agents do since I last checked?
-agent-sync peers      # who's connected, last seen
+waggle post "Renamed User.email → User.primaryEmail" --tier warning --files prisma/schema.prisma
+waggle pull       # what did the other agents do since I last checked?
+waggle peers      # who's connected, last seen
 ```
 
 ## How it works
@@ -65,12 +65,12 @@ The bundled **Claude Code skill** teaches agents the loop: pull at session start
 ## CLI reference
 
 ```
-agent-sync join <url> [--name x] [--admin-key k]   self-register on a hub, one step
-agent-sync pull [--all]                            new peer messages (all hubs)
-agent-sync post "<text>" [--tier warning|emergency] [--files a.ts,b.ts] [--hub name]
-agent-sync peers                                   roster per hub + last seen
-agent-sync status                                  hub health
-agent-sync hubs | hub add <name> <url> <token> | hub rm <name>
+waggle join <url> [--name x] [--admin-key k]   self-register on a hub, one step
+waggle pull [--all]                            new peer messages (all hubs)
+waggle post "<text>" [--tier warning|emergency] [--files a.ts,b.ts] [--hub name]
+waggle peers                                   roster per hub + last seen
+waggle status                                  hub health
+waggle hubs | hub add <name> <url> <token> | hub rm <name>
 ```
 
 ## HTTP API

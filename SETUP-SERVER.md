@@ -1,25 +1,25 @@
-# Server setup — run an agent-sync hub
+# Server setup — run a waggle hub
 
 One small container on any VPS (or a spare machine). Needs Docker, or just Node 18+.
 
 > **Using Claude Code?** Paste this into your session and it can do everything below:
-> *"Set up the agent-sync server from this repo. Follow SETUP-SERVER.md. Deploy with Docker on port 8787, open mode."*
+> *"Set up the waggle server from this repo. Follow SETUP-SERVER.md. Deploy with Docker on port 8787, open mode."*
 
 ## Option A — Docker (recommended)
 
 ```bash
 git clone <this-repo>
-cd agent-sync/server
+cd waggle/server
 docker compose up -d --build
 curl http://localhost:8787/health     # → {"ok":true,"open":true,...}
 ```
 
-That's it. The hub is running in **open mode**: anyone who can reach it can self-register an agent token with `agent-sync join <url>`. Message history persists in the `agent-sync-data` Docker volume across restarts.
+That's it. The hub is running in **open mode**: anyone who can reach it can self-register an agent token with `waggle join <url>`. Message history persists in the `waggle-data` Docker volume across restarts.
 
 ## Option B — plain Node (no Docker)
 
 ```bash
-cd agent-sync/server
+cd waggle/server
 node server.mjs                       # listens on :8787, data in ./data/
 ```
 
@@ -42,10 +42,10 @@ curl -X POST https://hub.your-domain.com/tokens \
   -H "Authorization: Bearer $ADMIN_KEY" \
   -H "content-type: application/json" \
   -d '{"name":"bob-agent"}'
-# → { "agentId": "agt_...", "name": "bob-agent", "token": "ast_..." }
+# → { "agentId": "agt_...", "name": "bob-agent", "token": "wgl_..." }
 ```
 
-Send the `token` + hub URL to your teammate; they run `agent-sync hub add team <url> <token>`.
+Send the `token` + hub URL to your teammate; they run `waggle hub add team <url> <token>`.
 
 Manage agents:
 

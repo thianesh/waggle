@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// agent-sync client — talk to one or more agent-sync hubs.
+// waggle client — talk to one or more waggle hubs.
 // Zero dependencies; needs Node 18+ (built-in fetch).
 //
-// Config: ~/.config/agent-sync/config.json
-//   { "hubs": [ { "name": "my-hub", "url": "https://...", "token": "ast_...", "cursor": 0 } ] }
+// Config: ~/.config/waggle/config.json
+//   { "hubs": [ { "name": "my-hub", "url": "https://...", "token": "wgl_...", "cursor": 0 } ] }
 //
 // Each hub entry = one place your agent posts to and reads from. Add your own
 // hub AND every peer hub whose owner gave you a token.
@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-const CONFIG_DIR = process.env.AGENT_SYNC_CONFIG_DIR || path.join(os.homedir(), '.config', 'agent-sync')
+const CONFIG_DIR = process.env.WAGGLE_CONFIG_DIR || path.join(os.homedir(), '.config', 'waggle')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json')
 
 function loadConfig() {
@@ -54,26 +54,26 @@ function printMessages(hubName, msgs) {
 const [, , cmd, ...args] = process.argv
 
 function usage(code = 0) {
-  console.log(`agent-sync — coordinate with peer AI agents via shared hubs
+  console.log(`waggle — coordinate with peer AI agents via shared hubs
 
 USAGE
-  agent-sync join <url> [--name <agent-name>] [--hub <hub-name>] [--admin-key <key>]
+  waggle join <url> [--name <agent-name>] [--hub <hub-name>] [--admin-key <key>]
                                             One-step: self-register on a hub and add it
                                             (--admin-key only needed if hub enforces one)
-  agent-sync hub add <name> <url> <token>   Register a hub with an existing token
-  agent-sync hub rm <name>                  Remove a hub
-  agent-sync hubs                           List configured hubs
-  agent-sync post "<text>" [--tier normal|warning|emergency] [--files a.ts,b.ts] [--hub <name>]
+  waggle hub add <name> <url> <token>   Register a hub with an existing token
+  waggle hub rm <name>                  Remove a hub
+  waggle hubs                           List configured hubs
+  waggle post "<text>" [--tier normal|warning|emergency] [--files a.ts,b.ts] [--hub <name>]
                                             Broadcast an update (default: all hubs)
-  agent-sync pull [--all]                   Fetch NEW messages from all hubs (--all = full history)
-  agent-sync peers                          List agents on each hub
-  agent-sync status                         Config + hub health
+  waggle pull [--all]                   Fetch NEW messages from all hubs (--all = full history)
+  waggle peers                          List agents on each hub
+  waggle status                         Config + hub health
 
 EXAMPLES
-  agent-sync join https://vps.example.com:8787 --name alice-agent
-  agent-sync hub add my-hub https://vps.example.com:8787 ast_xxxx
-  agent-sync post "Renamed User.email -> User.primaryEmail in schema.prisma" --tier warning --files prisma/schema.prisma
-  agent-sync pull`)
+  waggle join https://vps.example.com:8787 --name alice-agent
+  waggle hub add my-hub https://vps.example.com:8787 wgl_xxxx
+  waggle post "Renamed User.email -> User.primaryEmail in schema.prisma" --tier warning --files prisma/schema.prisma
+  waggle pull`)
   process.exit(code)
 }
 
@@ -88,7 +88,7 @@ const cfg = loadConfig()
 
 function requireHubs() {
   if (!cfg.hubs.length) {
-    console.error('No hubs configured. Run: agent-sync hub add <name> <url> <token>')
+    console.error('No hubs configured. Run: waggle hub add <name> <url> <token>')
     process.exit(1)
   }
 }
@@ -102,14 +102,14 @@ try {
     const name = getFlag('name', `${os.userInfo().username}-${os.hostname()}`.slice(0, 64))
     const hubName = getFlag('hub', new URL(url).hostname)
     const adminKey = getFlag('admin-key', null)
-    if (cfg.hubs.some((h) => h.name === hubName)) { console.error(`Hub "${hubName}" already exists (agent-sync hub rm ${hubName} first)`); process.exit(1) }
+    if (cfg.hubs.some((h) => h.name === hubName)) { console.error(`Hub "${hubName}" already exists (waggle hub rm ${hubName} first)`); process.exit(1) }
     const headers = { 'content-type': 'application/json' }
     if (adminKey) headers.authorization = `Bearer ${adminKey}`
     const res = await fetch(new URL('tokens', url.endsWith('/') ? url : url + '/'), {
       method: 'POST', headers, body: JSON.stringify({ name }), signal: AbortSignal.timeout(15000),
     })
     const data = await res.json().catch(() => ({}))
-    if (res.status === 401) { console.error('Hub enforces an admin key. Ask the hub owner for a token (agent-sync hub add) or the admin key (--admin-key).'); process.exit(1) }
+    if (res.status === 401) { console.error('Hub enforces an admin key. Ask the hub owner for a token (waggle hub add) or the admin key (--admin-key).'); process.exit(1) }
     if (!res.ok) { console.error(`Join failed: HTTP ${res.status} ${data.error || ''}`); process.exit(1) }
     cfg.hubs.push({ name: hubName, url, token: data.token, cursor: 0 })
     saveConfig(cfg)
@@ -120,7 +120,7 @@ try {
   else if (cmd === 'hub' && args[0] === 'add') {
     const [, name, url, token] = args
     if (!name || !url || !token) usage(1)
-    if (cfg.hubs.some((h) => h.name === name)) { console.error(`Hub "${name}" already exists (agent-sync hub rm ${name} first)`); process.exit(1) }
+    if (cfg.hubs.some((h) => h.name === name)) { console.error(`Hub "${name}" already exists (waggle hub rm ${name} first)`); process.exit(1) }
     const hub = { name, url, token, cursor: 0 }
     const health = await fetch(new URL('health', url.endsWith('/') ? url : url + '/'), { signal: AbortSignal.timeout(10000) }).then((r) => r.ok).catch(() => false)
     cfg.hubs.push(hub)
@@ -150,7 +150,7 @@ try {
       text = args[i]
       break
     }
-    if (!text) { console.error('Usage: agent-sync post "<text>" [--tier ...] [--files ...]'); process.exit(1) }
+    if (!text) { console.error('Usage: waggle post "<text>" [--tier ...] [--files ...]'); process.exit(1) }
     const tier = getFlag('tier', 'normal')
     const files = (getFlag('files', '') || '').split(',').map((s) => s.trim()).filter(Boolean)
     const only = getFlag('hub', null)

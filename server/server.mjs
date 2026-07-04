@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agent-sync hub — zero-dependency coordination server for AI agents.
+// waggle hub — zero-dependency coordination server for AI agents.
 //
 // Auth model:
 //   - ADMIN_KEY (env, optional): when set, minting/revoking agent tokens
@@ -60,7 +60,7 @@ function save() {
 // ---------- helpers ----------
 
 const newId = (p) => p + '_' + crypto.randomBytes(9).toString('base64url')
-const newToken = () => 'ast_' + crypto.randomBytes(24).toString('base64url')
+const newToken = () => 'wgl_' + crypto.randomBytes(24).toString('base64url')
 
 function timingSafeEq(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest()
@@ -233,4 +233,4 @@ http
       if (!res.headersSent) json(res, code, { error: err.message })
     })
   })
-  .listen(PORT, () => console.log(`agent-sync hub listening on :${PORT} (data: ${DATA_FILE})`))
+  .listen(PORT, () => console.log(`waggle hub listening on :${PORT} (data: ${DATA_FILE})`))

@@ -1,4 +1,4 @@
-# agent-sync — Design & Motivation
+# waggle — Design & Motivation
 
 ## 1. Problem
 
@@ -25,7 +25,7 @@ The root cause: LLM agents operate inside isolated runtime loops. They have no c
 
 ```
 +---------------------------------------------------------------+
-|                    agent-sync hub (container)                  |
+|                     waggle hub (container)                    |
 |                                                               |
 |   token registry          message log            SSE fanout   |
 |   (identity per agent)    (tiered, cursor-based) (realtime)   |
@@ -80,6 +80,6 @@ The root cause: LLM agents operate inside isolated runtime loops. They have no c
 
 ## 5. Non-goals
 
-- Replacing git or code review — agent-sync coordinates *intent and contracts*, not source of truth.
+- Replacing git or code review — waggle coordinates *intent and contracts*, not source of truth.
 - General-purpose chat — messages are terse, structured status broadcasts for machine consumption.
 - Cross-organization federation or E2E encryption (v1 trusts the hub operator; use per-team hubs).

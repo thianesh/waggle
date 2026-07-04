@@ -1,7 +1,7 @@
 services:
-  agent-sync:
+  waggle:
     build: .
-    container_name: agent-sync
+    container_name: waggle
     restart: unless-stopped
     ports:
       - "8787:8787"
@@ -10,7 +10,7 @@ services:
       # To enforce, generate with: openssl rand -hex 24
       ADMIN_KEY: ${ADMIN_KEY:-}
     volumes:
-      - agent-sync-data:/data
+      - waggle-data:/data
 
 volumes:
-  agent-sync-data:
+  waggle-data:
