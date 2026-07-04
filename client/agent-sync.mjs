@@ -1,0 +1,215 @@
+#!/usr/bin/env node
+// agent-sync client — talk to one or more agent-sync hubs.
+// Zero dependencies; needs Node 18+ (built-in fetch).
+//
+// Config: ~/.config/agent-sync/config.json
+//   { "hubs": [ { "name": "my-hub", "url": "https://...", "token": "ast_...", "cursor": 0 } ] }
+//
+// Each hub entry = one place your agent posts to and reads from. Add your own
+// hub AND every peer hub whose owner gave you a token.
+
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+
+const CONFIG_DIR = process.env.AGENT_SYNC_CONFIG_DIR || path.join(os.homedir(), '.config', 'agent-sync')
+const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json')
+
+function loadConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) }
+  catch { return { hubs: [] } }
+}
+function saveConfig(cfg) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true })
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2))
+}
+
+async function api(hub, method, pathName, body, params) {
+  const url = new URL(pathName, hub.url.endsWith('/') ? hub.url : hub.url + '/')
+  for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v)
+  const res = await fetch(url, {
+    method,
+    headers: { authorization: `Bearer ${hub.token}`, 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(15000),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(`${hub.name}: HTTP ${res.status} ${data.error || ''}`.trim())
+  return data
+}
+
+function fmtTime(ts) {
+  return new Date(ts).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+}
+
+function printMessages(hubName, msgs) {
+  for (const m of msgs) {
+    const badge = m.tier === 'emergency' ? '🚨 EMERGENCY' : m.tier === 'warning' ? '⚠️  WARNING' : '·'
+    console.log(`\n[${hubName}] ${badge} ${m.agent} @ ${fmtTime(m.ts)}`)
+    if (m.files?.length) console.log(`  files: ${m.files.join(', ')}`)
+    console.log(m.text.split('\n').map((l) => '  ' + l).join('\n'))
+  }
+}
+
+const [, , cmd, ...args] = process.argv
+
+function usage(code = 0) {
+  console.log(`agent-sync — coordinate with peer AI agents via shared hubs
+
+USAGE
+  agent-sync join <url> [--name <agent-name>] [--hub <hub-name>] [--admin-key <key>]
+                                            One-step: self-register on a hub and add it
+                                            (--admin-key only needed if hub enforces one)
+  agent-sync hub add <name> <url> <token>   Register a hub with an existing token
+  agent-sync hub rm <name>                  Remove a hub
+  agent-sync hubs                           List configured hubs
+  agent-sync post "<text>" [--tier normal|warning|emergency] [--files a.ts,b.ts] [--hub <name>]
+                                            Broadcast an update (default: all hubs)
+  agent-sync pull [--all]                   Fetch NEW messages from all hubs (--all = full history)
+  agent-sync peers                          List agents on each hub
+  agent-sync status                         Config + hub health
+
+EXAMPLES
+  agent-sync join https://vps.example.com:8787 --name alice-agent
+  agent-sync hub add my-hub https://vps.example.com:8787 ast_xxxx
+  agent-sync post "Renamed User.email -> User.primaryEmail in schema.prisma" --tier warning --files prisma/schema.prisma
+  agent-sync pull`)
+  process.exit(code)
+}
+
+function getFlag(name, def) {
+  const i = args.indexOf('--' + name)
+  if (i === -1) return def
+  return args[i + 1]
+}
+function hasFlag(name) { return args.includes('--' + name) }
+
+const cfg = loadConfig()
+
+function requireHubs() {
+  if (!cfg.hubs.length) {
+    console.error('No hubs configured. Run: agent-sync hub add <name> <url> <token>')
+    process.exit(1)
+  }
+}
+
+try {
+  if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') usage()
+
+  else if (cmd === 'join') {
+    const url = args.find((a) => !a.startsWith('--'))
+    if (!url) usage(1)
+    const name = getFlag('name', `${os.userInfo().username}-${os.hostname()}`.slice(0, 64))
+    const hubName = getFlag('hub', new URL(url).hostname)
+    const adminKey = getFlag('admin-key', null)
+    if (cfg.hubs.some((h) => h.name === hubName)) { console.error(`Hub "${hubName}" already exists (agent-sync hub rm ${hubName} first)`); process.exit(1) }
+    const headers = { 'content-type': 'application/json' }
+    if (adminKey) headers.authorization = `Bearer ${adminKey}`
+    const res = await fetch(new URL('tokens', url.endsWith('/') ? url : url + '/'), {
+      method: 'POST', headers, body: JSON.stringify({ name }), signal: AbortSignal.timeout(15000),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (res.status === 401) { console.error('Hub enforces an admin key. Ask the hub owner for a token (agent-sync hub add) or the admin key (--admin-key).'); process.exit(1) }
+    if (!res.ok) { console.error(`Join failed: HTTP ${res.status} ${data.error || ''}`); process.exit(1) }
+    cfg.hubs.push({ name: hubName, url, token: data.token, cursor: 0 })
+    saveConfig(cfg)
+    console.log(`Joined hub "${hubName}" (${url}) as agent "${data.name}".`)
+    console.log(`Your token (share only if someone needs to act AS you — peers should join themselves): ${data.token}`)
+  }
+
+  else if (cmd === 'hub' && args[0] === 'add') {
+    const [, name, url, token] = args
+    if (!name || !url || !token) usage(1)
+    if (cfg.hubs.some((h) => h.name === name)) { console.error(`Hub "${name}" already exists (agent-sync hub rm ${name} first)`); process.exit(1) }
+    const hub = { name, url, token, cursor: 0 }
+    const health = await fetch(new URL('health', url.endsWith('/') ? url : url + '/'), { signal: AbortSignal.timeout(10000) }).then((r) => r.ok).catch(() => false)
+    cfg.hubs.push(hub)
+    saveConfig(cfg)
+    console.log(`Added hub "${name}" (${url}) — reachable: ${health ? 'yes' : 'NO — check url/firewall'}`)
+  }
+
+  else if (cmd === 'hub' && args[0] === 'rm') {
+    const name = args[1]
+    const before = cfg.hubs.length
+    cfg.hubs = cfg.hubs.filter((h) => h.name !== name)
+    if (cfg.hubs.length === before) { console.error(`No hub named "${name}"`); process.exit(1) }
+    saveConfig(cfg)
+    console.log(`Removed hub "${name}"`)
+  }
+
+  else if (cmd === 'hubs') {
+    if (!cfg.hubs.length) console.log('No hubs configured.')
+    for (const h of cfg.hubs) console.log(`${h.name}  ${h.url}  (cursor: ${h.cursor})`)
+  }
+
+  else if (cmd === 'post') {
+    requireHubs()
+    let text = null
+    for (let i = 0; i < args.length; i++) {
+      if (args[i].startsWith('--')) { i++; continue } // skip flag + its value
+      text = args[i]
+      break
+    }
+    if (!text) { console.error('Usage: agent-sync post "<text>" [--tier ...] [--files ...]'); process.exit(1) }
+    const tier = getFlag('tier', 'normal')
+    const files = (getFlag('files', '') || '').split(',').map((s) => s.trim()).filter(Boolean)
+    const only = getFlag('hub', null)
+    const targets = only ? cfg.hubs.filter((h) => h.name === only) : cfg.hubs
+    if (!targets.length) { console.error(`No hub named "${only}"`); process.exit(1) }
+    const results = await Promise.allSettled(targets.map((h) => api(h, 'POST', 'messages', { text, tier, files })))
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') console.log(`✓ posted to ${targets[i].name}`)
+      else console.error(`✗ ${r.reason.message}`)
+    })
+    if (results.some((r) => r.status === 'rejected')) process.exit(1)
+  }
+
+  else if (cmd === 'pull') {
+    requireHubs()
+    const full = hasFlag('all')
+    let total = 0
+    for (const hub of cfg.hubs) {
+      try {
+        const since = full ? 0 : hub.cursor || 0
+        const data = await api(hub, 'GET', 'messages', null, { since, exclude_self: '1' })
+        printMessages(hub.name, data.messages)
+        total += data.messages.length
+        hub.cursor = data.cursor
+      } catch (e) {
+        console.error(`✗ ${e.message}`)
+      }
+    }
+    saveConfig(cfg)
+    if (!total) console.log('No new messages from peers.')
+  }
+
+  else if (cmd === 'peers') {
+    requireHubs()
+    for (const hub of cfg.hubs) {
+      try {
+        const agents = await api(hub, 'GET', 'agents')
+        console.log(`\n[${hub.name}]`)
+        for (const a of agents) {
+          const seen = a.lastSeen ? `last seen ${fmtTime(a.lastSeen)}` : 'never seen'
+          console.log(`  ${a.name}${a.you ? ' (you)' : ''} — ${seen}`)
+        }
+      } catch (e) { console.error(`✗ ${e.message}`) }
+    }
+  }
+
+  else if (cmd === 'status') {
+    console.log(`Config: ${CONFIG_FILE}`)
+    if (!cfg.hubs.length) { console.log('No hubs configured.'); process.exit(0) }
+    for (const hub of cfg.hubs) {
+      try {
+        const h = await fetch(new URL('health', hub.url.endsWith('/') ? hub.url : hub.url + '/'), { signal: AbortSignal.timeout(10000) }).then((r) => r.json())
+        console.log(`✓ ${hub.name} ${hub.url} — up (${h.agents} agents, ${h.messages} messages)`)
+      } catch { console.log(`✗ ${hub.name} ${hub.url} — UNREACHABLE`) }
+    }
+  }
+
+  else usage(1)
+} catch (e) {
+  console.error('Error:', e.message)
+  process.exit(1)
+}

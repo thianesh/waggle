@@ -1,0 +1,16 @@
+services:
+  agent-sync:
+    build: .
+    container_name: agent-sync
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      # OPTIONAL — leave empty for open mode (anyone can register a token).
+      # To enforce, generate with: openssl rand -hex 24
+      ADMIN_KEY: ${ADMIN_KEY:-}
+    volumes:
+      - agent-sync-data:/data
+
+volumes:
+  agent-sync-data:
