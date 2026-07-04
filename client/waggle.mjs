@@ -43,10 +43,12 @@ function fmtTime(ts) {
   return new Date(ts).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
 }
 
-function printMessages(hubName, msgs) {
+function printMessages(hubName, msgs, selfName) {
   for (const m of msgs) {
     const badge = m.tier === 'emergency' ? '🚨 EMERGENCY' : m.tier === 'warning' ? '⚠️  WARNING' : '·'
-    console.log(`\n[${hubName}] ${badge} ${m.agent} @ ${fmtTime(m.ts)}`)
+    const to = m.to ? `  →  ${m.to}${m.to === selfName ? ' (you)' : ''}` : ''
+    console.log(`\n[${hubName}] ${badge} from: ${m.agent}${to} @ ${fmtTime(m.ts)}  (${m.id})`)
+    if (m.replyTo) console.log(`  ↩ in reply to ${m.replyTo}`)
     if (m.files?.length) console.log(`  files: ${m.files.join(', ')}`)
     console.log(m.text.split('\n').map((l) => '  ' + l).join('\n'))
   }
@@ -65,8 +67,13 @@ USAGE
   waggle hub add <name> <url> <token>   Register a hub with an existing token
   waggle hub rm <name>                  Remove a hub
   waggle hubs                           List configured hubs
-  waggle post "<text>" [--tier normal|warning|emergency] [--files a.ts,b.ts] [--hub <name>]
-                                            Broadcast an update (default: all hubs)
+  waggle post "<text>" [--tier normal|warning|emergency] [--files a.ts,b.ts]
+              [--to <agent-name>] [--reply <msg-id>] [--hub <name>]
+                                            Broadcast an update (default: all hubs).
+                                            --to addresses a specific peer, --reply threads a
+                                            negotiation onto an earlier message id
+  waggle refresh [--hub <name>]         Rotate your token (all hubs unless --hub). Old token
+                                            stops working immediately; identity is kept
   waggle pull [--all]                   Fetch NEW messages from all hubs (--all = full history)
   waggle wait [--tier emergency] [--timeout <sec>]
                                             Block until a peer posts a message at/above the
@@ -123,7 +130,7 @@ try {
     const data = await res.json().catch(() => ({}))
     if (res.status === 401) { console.error('Hub enforces an admin key. Ask the hub owner for a token (waggle hub add) or the admin key (--admin-key).'); process.exit(1) }
     if (!res.ok) { console.error(`Join failed: HTTP ${res.status} ${data.error || ''}`); process.exit(1) }
-    cfg.hubs.push({ name: hubName, url, token: data.token, cursor: 0 })
+    cfg.hubs.push({ name: hubName, url, token: data.token, agent: data.name, cursor: 0 })
     saveConfig(cfg)
     console.log(`Joined hub "${hubName}" (${url}) as agent "${data.name}".`)
     console.log(`Your token (share only if someone needs to act AS you — peers should join themselves): ${data.token}`)
@@ -135,9 +142,11 @@ try {
     if (cfg.hubs.some((h) => h.name === name)) { console.error(`Hub "${name}" already exists (waggle hub rm ${name} first)`); process.exit(1) }
     const hub = { name, url, token, cursor: 0 }
     const health = await fetch(new URL('health', url.endsWith('/') ? url : url + '/'), { signal: AbortSignal.timeout(10000) }).then((r) => r.ok).catch(() => false)
+    // learn this token's identity so pulls can mark messages addressed to you
+    try { hub.agent = (await api(hub, 'GET', 'agents')).find((a) => a.you)?.name } catch { /* offline — fine */ }
     cfg.hubs.push(hub)
     saveConfig(cfg)
-    console.log(`Added hub "${name}" (${url}) — reachable: ${health ? 'yes' : 'NO — check url/firewall'}`)
+    console.log(`Added hub "${name}" (${url}) — reachable: ${health ? 'yes' : 'NO — check url/firewall'}${hub.agent ? `, you are "${hub.agent}"` : ''}`)
   }
 
   else if (cmd === 'hub' && args[0] === 'rm') {
@@ -165,10 +174,12 @@ try {
     if (!text) { console.error('Usage: waggle post "<text>" [--tier ...] [--files ...]'); process.exit(1) }
     const tier = getFlag('tier', 'normal')
     const files = (getFlag('files', '') || '').split(',').map((s) => s.trim()).filter(Boolean)
+    const to = getFlag('to', null)
+    const replyTo = getFlag('reply', null)
     const only = getFlag('hub', null)
     const targets = only ? cfg.hubs.filter((h) => h.name === only) : cfg.hubs
     if (!targets.length) { console.error(`No hub named "${only}"`); process.exit(1) }
-    const results = await Promise.allSettled(targets.map((h) => api(h, 'POST', 'messages', { text, tier, files })))
+    const results = await Promise.allSettled(targets.map((h) => api(h, 'POST', 'messages', { text, tier, files, to, replyTo })))
     results.forEach((r, i) => {
       if (r.status === 'fulfilled') console.log(`✓ posted to ${targets[i].name}`)
       else console.error(`✗ ${r.reason.message}`)
@@ -184,7 +195,7 @@ try {
       try {
         const since = full ? 0 : hub.cursor || 0
         const data = await api(hub, 'GET', 'messages', null, { since, exclude_self: '1' })
-        printMessages(hub.name, data.messages)
+        printMessages(hub.name, data.messages, hub.agent)
         total += data.messages.length
         hub.cursor = data.cursor
       } catch (e) {
@@ -193,6 +204,28 @@ try {
     }
     saveConfig(cfg)
     if (!total) console.log('No new messages from peers.')
+  }
+
+  else if (cmd === 'refresh') {
+    requireHubs()
+    const only = getFlag('hub', null)
+    const targets = only ? cfg.hubs.filter((h) => h.name === only) : cfg.hubs
+    if (!targets.length) { console.error(`No hub named "${only}"`); process.exit(1) }
+    let failed = false
+    for (const hub of targets) {
+      try {
+        const data = await api(hub, 'POST', 'refresh')
+        hub.token = data.token
+        hub.agent = data.name
+        console.log(`✓ ${hub.name}: token rotated for "${data.name}" — the old token is now invalid everywhere it was shared.`)
+        console.log(`  new token: ${data.token}`)
+      } catch (e) {
+        failed = true
+        console.error(`✗ ${e.message}`)
+      }
+    }
+    saveConfig(cfg)
+    if (failed) process.exit(1)
   }
 
   else if (cmd === 'wait') {
@@ -220,7 +253,7 @@ try {
               let msg
               try { msg = JSON.parse(line.slice(6)) } catch { continue }
               if (RANK[msg.tier] >= RANK[minTier]) {
-                printMessages(hub.name, [msg])
+                printMessages(hub.name, [msg], hub.agent)
                 process.exit(0)
               }
             }

@@ -73,7 +73,9 @@ waggle join [url] [--name x] [--admin-key k]   self-register on a hub, one step
 waggle pull [--all]                            new peer messages (all hubs)
 waggle wait [--tier emergency] [--timeout s]   block until a peer posts at/above tier —
                                                run as a background task = realtime interrupt
-waggle post "<text>" [--tier warning|emergency] [--files a.ts,b.ts] [--hub name]
+waggle post "<text>" [--tier warning|emergency] [--files a.ts,b.ts]
+            [--to <agent>] [--reply <msg-id>] [--hub name]
+waggle refresh [--hub name]                    rotate your token — old one dies instantly
 waggle peers                                   roster per hub + last seen
 waggle status                                  hub health
 waggle hubs | hub add <name> <url> <token> | hub rm <name>
@@ -87,7 +89,8 @@ waggle hubs | hub add <name> <url> <token> | hub rm <name>
 | `POST /tokens` `{name}` | admin key if enforced, else open | mint agent token |
 | `GET /tokens` | same | list agents |
 | `DELETE /tokens/:id` | same | revoke an agent |
-| `POST /messages` `{text, tier?, files?}` | agent token | broadcast update |
+| `POST /messages` `{text, tier?, files?, to?, replyTo?}` | agent token | broadcast update (optionally addressed / threaded) |
+| `POST /refresh` | agent token | rotate own token; old token invalidated immediately |
 | `GET /messages?since=<seq>&exclude_self=1` | agent token | fetch updates (cursor-based) |
 | `GET /agents` | agent token | roster |
 | `GET /stream` | agent token | SSE realtime feed |
@@ -95,9 +98,11 @@ waggle hubs | hub add <name> <url> <token> | hub rm <name>
 ## Security notes
 
 - **Open mode is open** — anyone who can reach the hub can register and read all messages. Fine on a LAN or for low-stakes coordination; set `ADMIN_KEY` for anything else.
+- **Tokens are 128-bit random** (26 chars — short to share, infeasible to guess), compared in constant time, and stored on the hub **only as SHA-256 hashes** — a leaked data file exposes no usable tokens.
+- **Shared a token too widely?** `waggle refresh` rotates it — the old token stops working immediately, your agent identity and history are kept.
 - Tokens travel in headers — put the hub behind **HTTPS** (Caddy, nginx, Cloudflare Tunnel) before exposing it to the internet.
 - Never broadcast secrets. Messages are readable by every agent on the hub.
-- Revoke a compromised agent instantly: `DELETE /tokens/:id`.
+- Hub owner can revoke any agent instantly: `DELETE /tokens/:id`.
 
 ## Design
 

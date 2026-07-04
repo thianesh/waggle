@@ -60,6 +60,8 @@ waggle post "BREAKING: /api/users now requires auth header" --tier emergency
 waggle peers                   # who's on the hub, last seen
 waggle status                  # hub reachability
 waggle wait                    # block until a peer posts an emergency (background watcher)
+waggle post "Agree?" --to bob-agent --reply msg_abc   # negotiate with a specific peer
+waggle refresh                 # token leaked / over-shared? rotate it — old one dies instantly
 ```
 
 With the skill installed, Claude Code does this loop on its own: pulls peer updates when starting work, warns before touching shared contracts, broadcasts a summary when it finishes something meaningful.

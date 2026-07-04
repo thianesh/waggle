@@ -45,6 +45,11 @@ try {
   db.messages ||= []
 } catch { /* fresh start */ }
 
+// migrate pre-hash records: tokens are stored only as sha256 digests at rest
+for (const a of db.agents) {
+  if (a.token) { a.tokenHash = crypto.createHash('sha256').update(a.token).digest('hex'); delete a.token }
+}
+
 let saveTimer = null
 function save() {
   // debounce writes; atomic rename so a crash never corrupts the file
@@ -60,7 +65,9 @@ function save() {
 // ---------- helpers ----------
 
 const newId = (p) => p + '_' + crypto.randomBytes(9).toString('base64url')
-const newToken = () => 'wgl_' + crypto.randomBytes(24).toString('base64url')
+// 16 random bytes = 128-bit entropy, 26-char token — short to share, infeasible to guess
+const newToken = () => 'wgl_' + crypto.randomBytes(16).toString('base64url')
+const hashToken = (t) => crypto.createHash('sha256').update(String(t)).digest('hex')
 
 function timingSafeEq(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest()
@@ -107,7 +114,8 @@ function readBody(req) {
 
 function findAgent(token) {
   if (!token) return null
-  return db.agents.find((a) => !a.revoked && timingSafeEq(a.token, token)) || null
+  const h = hashToken(token)
+  return db.agents.find((a) => !a.revoked && timingSafeEq(a.tokenHash, h)) || null
 }
 
 const TIERS = ['normal', 'warning', 'emergency']
@@ -149,10 +157,11 @@ async function handle(req, res) {
       const name = String(body.name || '').trim()
       if (!name || name.length > 64) return json(res, 400, { error: 'name required (max 64 chars)' })
       if (db.agents.some((a) => !a.revoked && a.name === name)) return json(res, 409, { error: `agent name "${name}" already exists` })
-      const agent = { id: newId('agt'), name, token: newToken(), createdAt: Date.now(), lastSeen: null, revoked: false }
+      const tok = newToken()
+      const agent = { id: newId('agt'), name, tokenHash: hashToken(tok), createdAt: Date.now(), lastSeen: null, revoked: false }
       db.agents.push(agent)
       save()
-      return json(res, 201, { agentId: agent.id, name: agent.name, token: agent.token })
+      return json(res, 201, { agentId: agent.id, name: agent.name, token: tok })
     }
     if (route === 'GET /tokens') {
       return json(res, 200, db.agents.filter(a => !a.revoked).map(({ id, name, createdAt, lastSeen }) => ({ id, name, createdAt, lastSeen })))
@@ -174,11 +183,23 @@ async function handle(req, res) {
   agent.lastSeen = Date.now()
   save()
 
+  if (route === 'POST /refresh') {
+    // rotate the caller's own token: old one stops working immediately,
+    // identity (id, name, history) is preserved
+    const tok = newToken()
+    agent.tokenHash = hashToken(tok)
+    save()
+    return json(res, 200, { agentId: agent.id, name: agent.name, token: tok })
+  }
+
   if (route === 'POST /messages') {
     const body = await readBody(req)
     const text = String(body.text || '').trim()
     if (!text) return json(res, 400, { error: 'text required' })
     const tier = TIERS.includes(body.tier) ? body.tier : 'normal'
+    const to = body.to ? String(body.to).slice(0, 64) : null
+    if (to && !db.agents.some((a) => !a.revoked && a.name === to)) return json(res, 400, { error: `unknown recipient "${to}"` })
+    const replyTo = body.replyTo ? String(body.replyTo).slice(0, 64) : null
     const msg = {
       id: newId('msg'),
       seq: (db.messages.at(-1)?.seq || 0) + 1,
@@ -186,6 +207,8 @@ async function handle(req, res) {
       agentId: agent.id,
       agent: agent.name,
       tier,
+      to,
+      replyTo,
       text: text.slice(0, 64 * 1024),
       files: Array.isArray(body.files) ? body.files.slice(0, 50).map(String) : [],
     }
