@@ -173,6 +173,14 @@
     cursor: pointer; white-space: nowrap; transition: all .15s;
   }
   #themeBtn:hover { color: var(--honey); border-color: var(--honey-2); }
+  @media (max-width: 640px) {
+    .hrow { flex-wrap: wrap; row-gap: 2px; padding: 11px 0; }
+    .logo { order: 1; }
+    #themeBtn { order: 2; margin-left: auto; }
+    nav { order: 3; width: 100%; margin-left: 0; justify-content: space-between; gap: 0; }
+    nav a { padding: 4px 6px; font-size: 12px; }
+    .wrap { padding: 0 18px; }
+  }
 
   /* ---------- hero ---------- */
   .hero { padding: 96px 0 30px; text-align: center; }
@@ -322,7 +330,7 @@
 
   /* ---------- footer ---------- */
   footer { margin-top: 110px; border-top: 1px solid var(--border); background: var(--bg-2); }
-  .frow { padding: 34px 0 46px; display: grid; gap: 20px; grid-template-columns: 1fr auto; align-items: start; }
+  .frow { padding-top: 34px; padding-bottom: 46px; display: grid; gap: 20px; grid-template-columns: 1fr auto; align-items: start; }
   .fexit { color: var(--dim); font-size: 13px; }
   .fexit .p { color: var(--green); }
   .fexit .out { margin-top: 6px; }
@@ -331,7 +339,12 @@
   .flinks a:hover { color: var(--honey); text-decoration: none; }
   .fbee { margin-top: 14px; color: var(--dim); font-size: 12px; }
   .fbee b { color: var(--honey); font-weight: 600; }
-  @media (max-width: 640px) { .frow { grid-template-columns: 1fr; } }
+  @media (max-width: 640px) {
+    footer { margin-top: 70px; }
+    .frow { grid-template-columns: 1fr; gap: 24px; padding-top: 28px; padding-bottom: 38px; }
+    .flinks { gap: 12px 18px; }
+    .fbee { line-height: 1.6; }
+  }
 </style>
 </head>
 <body>

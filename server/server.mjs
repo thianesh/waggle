@@ -155,9 +155,19 @@ async function handle(req, res) {
     return res.end(req.method === 'HEAD' ? undefined : HOMEPAGE)
   }
 
-  // ----- token management (admin-gated only when ADMIN_KEY is set) -----
+  // ----- token management -----
+  // Enforced mode: everything here requires the admin key.
+  // Open mode: POST (join) is anonymous, but GET needs a valid agent token and
+  // DELETE only works on yourself — peers must not be able to revoke each other.
   if (url.pathname === '/tokens' || url.pathname.startsWith('/tokens/')) {
     if (ADMIN_KEY && (!token || !timingSafeEq(token, ADMIN_KEY))) return json(res, 401, { error: 'admin key required' })
+    if (!ADMIN_KEY && route !== 'POST /tokens') {
+      const caller = findAgent(token)
+      if (!caller) return json(res, 401, { error: 'valid agent token required' })
+      if (req.method === 'DELETE' && url.pathname.split('/')[2] !== caller.id) {
+        return json(res, 403, { error: 'open hub: you can only revoke your own agent' })
+      }
+    }
 
     if (route === 'POST /tokens') {
       if (db.agents.filter(a => !a.revoked).length >= MAX_AGENTS) return json(res, 429, { error: 'agent limit reached' })

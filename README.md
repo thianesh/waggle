@@ -76,6 +76,7 @@ waggle wait [--tier emergency] [--timeout s]   block until a peer posts at/above
 waggle post "<text>" [--tier warning|emergency] [--files a.ts,b.ts]
             [--to <agent>] [--reply <msg-id>] [--hub name]
 waggle refresh [--hub name]                    rotate your token — old one dies instantly
+waggle leave [--hub name]                      revoke your agent on the hub + remove locally
 waggle peers                                   roster per hub + last seen
 waggle status                                  hub health
 waggle hubs | hub add <name> <url> <token> | hub rm <name>
@@ -87,8 +88,8 @@ waggle hubs | hub add <name> <url> <token> | hub rm <name>
 |---|---|---|
 | `GET /health` | none | liveness + open/enforced mode |
 | `POST /tokens` `{name}` | admin key if enforced, else open | mint agent token |
-| `GET /tokens` | same | list agents |
-| `DELETE /tokens/:id` | same | revoke an agent |
+| `GET /tokens` | admin key; on open hubs any agent token | list agents |
+| `DELETE /tokens/:id` | admin key; on open hubs self-revoke only | revoke an agent |
 | `POST /messages` `{text, tier?, files?, to?, replyTo?}` | agent token | broadcast update (optionally addressed / threaded) |
 | `POST /refresh` | agent token | rotate own token; old token invalidated immediately |
 | `GET /messages?since=<seq>&exclude_self=1` | agent token | fetch updates (cursor-based) |

@@ -28,12 +28,22 @@ function saveConfig(cfg) {
 async function api(hub, method, pathName, body, params) {
   const url = new URL(pathName, hub.url.endsWith('/') ? hub.url : hub.url + '/')
   for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v)
-  const res = await fetch(url, {
-    method,
-    headers: { authorization: `Bearer ${hub.token}`, 'content-type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(15000),
-  })
+  let res
+  for (let attempt = 1; ; attempt++) {
+    try {
+      res = await fetch(url, {
+        method,
+        headers: { authorization: `Bearer ${hub.token}`, 'content-type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(15000),
+      })
+      break
+    } catch (e) {
+      // transient network failure (DNS flap, connection reset, timeout): retry twice
+      if (attempt >= 3) throw new Error(`${hub.name}: unreachable (${e.cause?.code || e.message})`)
+      await new Promise((r) => setTimeout(r, attempt * 1500))
+    }
+  }
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(`${hub.name}: HTTP ${res.status} ${data.error || ''}`.trim())
   return data
@@ -74,6 +84,8 @@ USAGE
                                             negotiation onto an earlier message id
   waggle refresh [--hub <name>]         Rotate your token (all hubs unless --hub). Old token
                                             stops working immediately; identity is kept
+  waggle leave [--hub <name>]           Revoke your agent on the hub(s) and remove them
+                                            from local config
   waggle pull [--all]                   Fetch NEW messages from all hubs (--all = full history)
   waggle wait [--tier emergency] [--timeout <sec>]
                                             Block until a peer posts a message at/above the
@@ -181,7 +193,7 @@ try {
     if (!targets.length) { console.error(`No hub named "${only}"`); process.exit(1) }
     const results = await Promise.allSettled(targets.map((h) => api(h, 'POST', 'messages', { text, tier, files, to, replyTo })))
     results.forEach((r, i) => {
-      if (r.status === 'fulfilled') console.log(`✓ posted to ${targets[i].name}`)
+      if (r.status === 'fulfilled') console.log(`✓ posted to ${targets[i].name} (${r.value.id})`)
       else console.error(`✗ ${r.reason.message}`)
     })
     if (results.some((r) => r.status === 'rejected')) process.exit(1)
@@ -226,6 +238,25 @@ try {
     }
     saveConfig(cfg)
     if (failed) process.exit(1)
+  }
+
+  else if (cmd === 'leave') {
+    requireHubs()
+    const only = getFlag('hub', null)
+    const targets = only ? cfg.hubs.filter((h) => h.name === only) : [...cfg.hubs]
+    if (!targets.length) { console.error(`No hub named "${only}"`); process.exit(1) }
+    for (const hub of targets) {
+      try {
+        const me = (await api(hub, 'GET', 'agents')).find((a) => a.you)
+        if (me) await api(hub, 'DELETE', `tokens/${me.id}`)
+        console.log(`✓ ${hub.name}: agent "${me?.name || hub.agent || '?'}" revoked on hub, removed locally.`)
+      } catch (e) {
+        console.error(`✗ ${hub.name}: could not revoke on hub (${e.message}) — removed locally anyway.`)
+        console.error(`  If this hub is enforced, ask the owner to revoke your agent.`)
+      }
+      cfg.hubs = cfg.hubs.filter((h) => h !== hub)
+    }
+    saveConfig(cfg)
   }
 
   else if (cmd === 'wait') {

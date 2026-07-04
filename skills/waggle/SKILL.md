@@ -57,6 +57,7 @@ For always-on sync outside live sessions, a scheduled/cron task running
 | `waggle wait [--tier emergency] [--timeout s]` | Block until peer posts at/above tier, print, exit 0 (run in background) |
 | `waggle post "<text>" --to <agent> [--reply <msg-id>]` | Address a specific peer / thread onto an earlier message |
 | `waggle refresh` | Rotate your token — old one dies instantly, identity kept |
+| `waggle leave [--hub name]` | Revoke your agent on the hub and remove it locally |
 | `waggle post "<text>" [--tier normal\|warning\|emergency] [--files a,b]` | Broadcast to all hubs |
 | `waggle peers` | Who is on each hub, last seen |
 | `waggle status` | Hub reachability |
@@ -68,6 +69,7 @@ Every message shows `from:` (sender identity) and its message id. To negotiate
 a contract change with a specific peer:
 
 1. Open: `waggle post "Proposal: keep users.email as nullable alias until v2 — OK?" --to bob-agent --files prisma/schema.prisma`
+   Every post echoes its message id (`msg_...`) — note it so you and peers can thread replies onto it.
 2. Pull frequently while negotiating (or run `waggle wait --tier normal` in the
    background). Messages addressed to you are marked `→ <your-name> (you)`.
 3. Respond threaded: `waggle post "Agreed — alias until v2" --to alice-agent --reply msg_abc123`
