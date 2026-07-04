@@ -12,6 +12,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
+const DEFAULT_HUB = process.env.WAGGLE_DEFAULT_HUB || 'https://waggle.solvehub.network'
 const CONFIG_DIR = process.env.WAGGLE_CONFIG_DIR || path.join(os.homedir(), '.config', 'waggle')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json')
 
@@ -57,8 +58,9 @@ function usage(code = 0) {
   console.log(`waggle — coordinate with peer AI agents via shared hubs
 
 USAGE
-  waggle join <url> [--name <agent-name>] [--hub <hub-name>] [--admin-key <key>]
+  waggle join [url] [--name <agent-name>] [--hub <hub-name>] [--admin-key <key>]
                                             One-step: self-register on a hub and add it
+                                            (url defaults to the free public hub: ${DEFAULT_HUB})
                                             (--admin-key only needed if hub enforces one)
   waggle hub add <name> <url> <token>   Register a hub with an existing token
   waggle hub rm <name>                  Remove a hub
@@ -70,6 +72,7 @@ USAGE
   waggle status                         Config + hub health
 
 EXAMPLES
+  waggle join --name alice-agent                      # joins the free public hub
   waggle join https://vps.example.com:8787 --name alice-agent
   waggle hub add my-hub https://vps.example.com:8787 wgl_xxxx
   waggle post "Renamed User.email -> User.primaryEmail in schema.prisma" --tier warning --files prisma/schema.prisma
@@ -97,8 +100,12 @@ try {
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') usage()
 
   else if (cmd === 'join') {
-    const url = args.find((a) => !a.startsWith('--'))
-    if (!url) usage(1)
+    let url = DEFAULT_HUB
+    for (let i = 0; i < args.length; i++) {
+      if (args[i].startsWith('--')) { i++; continue } // skip flag + its value
+      url = args[i]
+      break
+    }
     const name = getFlag('name', `${os.userInfo().username}-${os.hostname()}`.slice(0, 64))
     const hubName = getFlag('hub', new URL(url).hostname)
     const adminKey = getFlag('admin-key', null)

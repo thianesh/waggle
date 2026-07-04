@@ -8,7 +8,7 @@ One small container on any VPS (or a spare machine). Needs Docker, or just Node 
 ## Option A — Docker (recommended)
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/thianesh/waggle.git
 cd waggle/server
 docker compose up -d --build
 curl http://localhost:8787/health     # → {"ok":true,"open":true,...}

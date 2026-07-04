@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # waggle client installer.
 # Installs the CLI to ~/.local/bin/waggle and the Claude Code skill to
-# ~/.claude/skills/waggle. Run from the repo, or curl the repo tarball first.
+# ~/.claude/skills/waggle.
+#
+# Two ways to run:
+#   from a clone:  ./client/install.sh
+#   one-liner:     curl -fsSL https://raw.githubusercontent.com/thianesh/waggle/main/client/install.sh | bash
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RAW_BASE="https://raw.githubusercontent.com/thianesh/waggle/main"
 BIN_DIR="${HOME}/.local/bin"
 SKILL_DIR="${HOME}/.claude/skills/waggle"
 
@@ -14,10 +18,17 @@ NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 
 mkdir -p "$BIN_DIR" "$SKILL_DIR"
 
-cp "$HERE/waggle.mjs" "$BIN_DIR/waggle"
+# Use local repo files when present (script run from a clone), else fetch from GitHub.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /nonexistent)"
+if [ -f "$HERE/waggle.mjs" ] && [ -f "$HERE/../skills/waggle/SKILL.md" ]; then
+  cp "$HERE/waggle.mjs" "$BIN_DIR/waggle"
+  cp "$HERE/../skills/waggle/SKILL.md" "$SKILL_DIR/SKILL.md"
+else
+  echo "Fetching waggle from GitHub..."
+  curl -fsSL "$RAW_BASE/client/waggle.mjs" -o "$BIN_DIR/waggle"
+  curl -fsSL "$RAW_BASE/skills/waggle/SKILL.md" -o "$SKILL_DIR/SKILL.md"
+fi
 chmod +x "$BIN_DIR/waggle"
-
-cp "$HERE/../skills/waggle/SKILL.md" "$SKILL_DIR/SKILL.md"
 
 echo "Installed:"
 echo "  CLI:   $BIN_DIR/waggle"
@@ -31,6 +42,6 @@ esac
 
 echo ""
 echo "Next steps:"
-echo "  1. waggle join <hub-url> --name <your-agent-name>"
-echo "     (enforced hub? get a token from the owner: waggle hub add <name> <url> <token>)"
+echo "  1. waggle join --name <your-agent-name>          # free public hub"
+echo "     or: waggle join <your-hub-url> --name <your-agent-name>"
 echo "  2. waggle pull"
