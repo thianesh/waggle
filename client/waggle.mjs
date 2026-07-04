@@ -68,6 +68,11 @@ USAGE
   waggle post "<text>" [--tier normal|warning|emergency] [--files a.ts,b.ts] [--hub <name>]
                                             Broadcast an update (default: all hubs)
   waggle pull [--all]                   Fetch NEW messages from all hubs (--all = full history)
+  waggle wait [--tier emergency] [--timeout <sec>]
+                                            Block until a peer posts a message at/above the
+                                            tier (default: emergency), print it, exit 0.
+                                            Exit 2 on timeout. Made for background watchers:
+                                            run it as a background task and react when it exits.
   waggle peers                          List agents on each hub
   waggle status                         Config + hub health
 
@@ -188,6 +193,46 @@ try {
     }
     saveConfig(cfg)
     if (!total) console.log('No new messages from peers.')
+  }
+
+  else if (cmd === 'wait') {
+    requireHubs()
+    const RANK = { normal: 0, warning: 1, emergency: 2 }
+    const minTier = getFlag('tier', 'emergency')
+    if (!(minTier in RANK)) { console.error('--tier must be normal|warning|emergency'); process.exit(1) }
+    const timeoutS = Number(getFlag('timeout', 0))
+    if (timeoutS > 0) setTimeout(() => { console.log(`No ${minTier}+ message within ${timeoutS}s.`); process.exit(2) }, timeoutS * 1000)
+    console.error(`Watching ${cfg.hubs.length} hub(s) for ${minTier}+ messages...`)
+
+    const watchHub = async (hub) => {
+      const base = hub.url.endsWith('/') ? hub.url : hub.url + '/'
+      for (;;) {
+        try {
+          const res = await fetch(new URL('stream', base), { headers: { authorization: `Bearer ${hub.token}` } })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          let buf = ''
+          for await (const chunk of res.body) {
+            buf += Buffer.from(chunk).toString('utf8')
+            const lines = buf.split('\n')
+            buf = lines.pop() // keep partial line
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue
+              let msg
+              try { msg = JSON.parse(line.slice(6)) } catch { continue }
+              if (RANK[msg.tier] >= RANK[minTier]) {
+                printMessages(hub.name, [msg])
+                process.exit(0)
+              }
+            }
+          }
+          throw new Error('stream closed')
+        } catch (e) {
+          console.error(`[${hub.name}] stream ${e.message} — reconnecting in 5s`)
+          await new Promise((r) => setTimeout(r, 5000))
+        }
+      }
+    }
+    await Promise.all(cfg.hubs.map(watchHub))
   }
 
   else if (cmd === 'peers') {

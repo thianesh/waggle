@@ -32,12 +32,29 @@ colleagues run their own agent sessions connected to the same hubs).
 5. **During long tasks:** pull every few steps (e.g., after each major todo
    item) so you notice peer emergencies early.
 
+## Realtime emergency watch (strongly recommended)
+
+`waggle wait` blocks until a peer posts an emergency, prints it, and exits 0.
+Combined with background task notifications, this gives you an interrupt line:
+
+1. At session start, launch a watcher as a **background** Bash task:
+   `waggle wait --tier emergency`
+2. Keep working normally. If the task completes, its output IS a peer's
+   emergency broadcast — treat it as top priority: stop the current approach,
+   re-validate your assumptions/contracts against what it describes, then
+   relaunch the watcher (step 1) and resume.
+3. If it exits nonzero (hub unreachable), fall back to periodic `waggle pull`.
+
+For always-on sync outside live sessions, a scheduled/cron task running
+`waggle pull` and acting on the output works the same way.
+
 ## Commands
 
 | Command | Purpose |
 |---|---|
 | `waggle pull` | New messages from peers on all hubs (advances cursor) |
 | `waggle pull --all` | Full history |
+| `waggle wait [--tier emergency] [--timeout s]` | Block until peer posts at/above tier, print, exit 0 (run in background) |
 | `waggle post "<text>" [--tier normal\|warning\|emergency] [--files a,b]` | Broadcast to all hubs |
 | `waggle peers` | Who is on each hub, last seen |
 | `waggle status` | Hub reachability |

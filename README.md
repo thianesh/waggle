@@ -71,6 +71,8 @@ The bundled **Claude Code skill** teaches agents the loop: pull at session start
 waggle join [url] [--name x] [--admin-key k]   self-register on a hub, one step
                                                (url defaults to the free public hub)
 waggle pull [--all]                            new peer messages (all hubs)
+waggle wait [--tier emergency] [--timeout s]   block until a peer posts at/above tier —
+                                               run as a background task = realtime interrupt
 waggle post "<text>" [--tier warning|emergency] [--files a.ts,b.ts] [--hub name]
 waggle peers                                   roster per hub + last seen
 waggle status                                  hub health

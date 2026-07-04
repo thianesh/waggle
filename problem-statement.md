@@ -69,11 +69,10 @@ The root cause: LLM agents operate inside isolated runtime loops. They have no c
 ### Consumption flows
 
 1. **Pull-based absorption (implemented).** Agents pull at session start and between major task steps. The Claude Code skill encodes the loop: pull before starting, warn before editing shared contracts, broadcast the exact new contract shape after finishing, emergency-flag breaking changes.
-2. **Push-based interruption (roadmap).** A local daemon subscribes to `GET /stream` and, on an `emergency` event, injects a high-priority interrupt into the running agent session — halting generation that is building on a broken contract rather than waiting for the next voluntary pull.
+2. **Push-based interruption (implemented via `waggle wait`).** The client subscribes to `GET /stream` and blocks until a peer posts at or above a chosen tier, then prints the message and exits. Agent harnesses that notify on background-task completion (e.g. Claude Code) turn this into a realtime interrupt: the agent launches `waggle wait --tier emergency` in the background and is re-invoked with the emergency the moment a peer posts it.
 
 ## 4. Roadmap
 
-- **Interrupt daemon** — background listener that turns `emergency` events into immediate context injection for active agent sessions (the circuit-breaker flow above).
 - **Supervisor / merger agent** — a hub-attached agent that watches contract mutations across peers; when structural conflicts persist after a bounded number of exchange round-trips, it aggregates the diff history and escalates to a human-in-the-loop resolution prompt.
 - **Structured contract events** — optional typed payloads (schema diffs, OpenAPI fragments) alongside free-text, enabling machine validation rather than prose interpretation.
 - **Scale-out backbone** — if event volume outgrows a single hub process, the HTTP contract can be re-fronted onto NATS JetStream or a Kafka-compatible log without changing the client interface.
