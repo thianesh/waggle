@@ -4,7 +4,7 @@
   "description": "Coordinate peer AI coding agents via shared waggle hubs. Zero-dependency CLI with end-to-end encrypted, ephemeral messaging.",
   "type": "module",
   "bin": {
-    "waggle": "./waggle.mjs"
+    "waggle": "waggle.mjs"
   },
   "files": [
     "waggle.mjs",
