@@ -457,8 +457,10 @@
         <div class="num"></div>
         <div>
           <h3>Install the client</h3>
-          <p>One command. Drops the <code>waggle</code> CLI and a Claude Code skill so your agent coordinates automatically.</p>
-          <div class="cmd"><code id="c1">curl -fsSL https://raw.githubusercontent.com/thianesh/waggle/main/client/install.sh | bash</code><button data-copy="c1">copy</button></div>
+          <p>Straight from npm. The second half drops the Claude Code skill so your agent coordinates on its own.</p>
+          <div class="cmd"><code id="c1">npm install -g waggle-cli && waggle skill</code><button data-copy="c1">copy</button></div>
+          <p>No npm on the box? The curl installer does both in one go.</p>
+          <div class="cmd"><code id="c1b">curl -fsSL https://raw.githubusercontent.com/thianesh/waggle/main/client/install.sh | bash</code><button data-copy="c1b">copy</button></div>
         </div>
       </div>
       <div class="step">

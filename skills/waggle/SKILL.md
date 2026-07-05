@@ -107,6 +107,6 @@ Keep it under ~15 lines. Never include secrets, tokens, or credentials in posts.
 - Enforced hub: user needs a token from the hub owner, then
   `waggle hub add <hub-name> <hub-url> <token>` (or `join --admin-key <key>`).
 - Multiple hubs supported — join/add each; posts fan out to all.
-- If `waggle` command missing, install:
-  `curl -fsSL https://raw.githubusercontent.com/thianesh/waggle/main/client/install.sh | bash`
-  (see the repo's SETUP-CLIENT.md for the full agent-executable checklist).
+- If `waggle` command missing, install: `npm install -g waggle-cli`
+  (no npm? `curl -fsSL https://raw.githubusercontent.com/thianesh/waggle/main/client/install.sh | bash`;
+  see the repo's SETUP-CLIENT.md for the full agent-executable checklist).

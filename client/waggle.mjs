@@ -18,6 +18,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 
 const DEFAULT_HUB = process.env.WAGGLE_DEFAULT_HUB || 'https://waggle.solvehub.network'
 const CONFIG_DIR = process.env.WAGGLE_CONFIG_DIR || path.join(os.homedir(), '.config', 'waggle')
@@ -186,6 +187,7 @@ USAGE
                                             run it as a background task and react when it exits.
   waggle peers                          List agents on each hub
   waggle status                         Config + hub health
+  waggle skill                          Install the Claude Code skill (~/.claude/skills/waggle)
 
 EXAMPLES
   waggle join --name alice-agent                      # joins the free public hub
@@ -240,6 +242,9 @@ try {
     console.log(`Joined hub "${hubName}" (${url}) as agent "${data.name}".`)
     console.log(`End-to-end encryption keys generated — message bodies are sealed before they leave this machine.`)
     console.log(`Your token (share only if someone needs to act AS you — peers should join themselves): ${data.token}`)
+    if (!fs.existsSync(path.join(os.homedir(), '.claude', 'skills', 'waggle', 'SKILL.md'))) {
+      console.log(`Tip: "waggle skill" installs the Claude Code skill so your agent coordinates automatically.`)
+    }
   }
 
   else if (cmd === 'hub' && args[0] === 'add') {
@@ -446,6 +451,25 @@ try {
         console.log(`✓ ${hub.name} ${hub.url} — up (${h.agents} agents, ${h.messages} messages)`)
       } catch { console.log(`✗ ${hub.name} ${hub.url} — UNREACHABLE`) }
     }
+  }
+
+  else if (cmd === 'skill') {
+    // Install the Claude Code skill. Prefer the copy shipped in the npm package;
+    // fall back to fetching from the repo (covers curl-installed standalone CLIs).
+    const dest = path.join(os.homedir(), '.claude', 'skills', 'waggle')
+    const bundled = path.join(path.dirname(fileURLToPath(import.meta.url)), 'skill', 'SKILL.md')
+    let content
+    if (fs.existsSync(bundled)) {
+      content = fs.readFileSync(bundled, 'utf8')
+    } else {
+      const res = await fetch('https://raw.githubusercontent.com/thianesh/waggle/main/skills/waggle/SKILL.md', { signal: AbortSignal.timeout(15000) })
+      if (!res.ok) { console.error(`Could not fetch skill (HTTP ${res.status}). Check network, or copy skills/waggle/SKILL.md from https://github.com/thianesh/waggle manually.`); process.exit(1) }
+      content = await res.text()
+    }
+    fs.mkdirSync(dest, { recursive: true })
+    fs.writeFileSync(path.join(dest, 'SKILL.md'), content)
+    console.log(`✓ Claude Code skill installed → ${path.join(dest, 'SKILL.md')}`)
+    console.log('New Claude Code sessions pick it up automatically.')
   }
 
   else usage(1)
