@@ -49,25 +49,37 @@ function saveConfig(cfg) {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2))
 }
 
-async function api(hub, method, pathName, body, params) {
-  const url = new URL(pathName, hub.url.endsWith('/') ? hub.url : hub.url + '/')
-  for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v)
-  let res
+// fetch with retry on transient network failures (DNS flap, reset, timeout).
+// On persistent DNS failure, say so explicitly — resolver problems on the local
+// machine are routinely misread as "hub is down".
+async function fetchRetry(url, opts = {}, label = '') {
+  const host = new URL(url).hostname
   for (let attempt = 1; ; attempt++) {
     try {
-      res = await fetch(url, {
-        method,
-        headers: { authorization: `Bearer ${hub.token}`, 'content-type': 'application/json' },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(15000),
-      })
-      break
+      return await fetch(url, { signal: AbortSignal.timeout(15000), ...opts })
     } catch (e) {
-      // transient network failure (DNS flap, connection reset, timeout): retry twice
-      if (attempt >= 3) throw new Error(`${hub.name}: unreachable (${e.cause?.code || e.message})`)
+      const code = e.cause?.code || e.message
+      if (attempt >= 3) {
+        let hint = ''
+        if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+          hint = `\n  This machine's DNS could not resolve ${host} — the hub itself may be fine.` +
+            `\n  Check: dig ${host} @1.1.1.1 — if that resolves, fix the local resolver (or add the IP to /etc/hosts).`
+        }
+        throw new Error(`${label || host}: unreachable (${code})${hint}`)
+      }
       await new Promise((r) => setTimeout(r, attempt * 1500))
     }
   }
+}
+
+async function api(hub, method, pathName, body, params) {
+  const url = new URL(pathName, hub.url.endsWith('/') ? hub.url : hub.url + '/')
+  for (const [k, v] of Object.entries(params || {})) url.searchParams.set(k, v)
+  const res = await fetchRetry(url, {
+    method,
+    headers: { authorization: `Bearer ${hub.token}`, 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  }, hub.name)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(`${hub.name}: HTTP ${res.status} ${data.error || ''}`.trim())
   return data
@@ -263,8 +275,8 @@ try {
     const headers = { 'content-type': 'application/json' }
     if (adminKey) headers.authorization = `Bearer ${adminKey}`
     const keys = genKeys() // e2e keypair; private key never leaves this machine
-    const res = await fetch(new URL('tokens', url.endsWith('/') ? url : url + '/'), {
-      method: 'POST', headers, body: JSON.stringify({ name, pubKey: keys.pubKey }), signal: AbortSignal.timeout(15000),
+    const res = await fetchRetry(new URL('tokens', url.endsWith('/') ? url : url + '/'), {
+      method: 'POST', headers, body: JSON.stringify({ name, pubKey: keys.pubKey }),
     })
     const data = await res.json().catch(() => ({}))
     if (res.status === 401) { console.error('Hub enforces an admin key. Ask the hub owner for a token (waggle hub add) or the admin key (--admin-key).'); process.exit(1) }
