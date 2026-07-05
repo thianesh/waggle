@@ -8,6 +8,14 @@
 //   - Agent tokens: minted via POST /tokens, shared with peers. Each token is
 //     an agent identity that can post and read messages.
 //
+// Privacy model:
+//   - Message bodies are end-to-end encrypted by clients (X25519 + AES-256-GCM);
+//     the hub stores and relays ciphertext it cannot decrypt. Routing metadata
+//     (sender, recipient, tier, thread id, timestamps) stays plaintext so the
+//     hub can route without reading bodies.
+//   - Messages live in RAM only, swept after MSG_TTL_MS (default 5 min). They
+//     are never written to disk; only agent identities persist.
+//
 // Storage: single JSON file in DATA_DIR (default ./data), atomic writes.
 
 import http from 'node:http'
@@ -22,6 +30,7 @@ const ADMIN_KEY = process.env.ADMIN_KEY
 const MAX_MESSAGES = Number(process.env.MAX_MESSAGES || 2000)
 const MAX_BODY = 256 * 1024 // 256 KB per request
 const MAX_AGENTS = Number(process.env.MAX_AGENTS || 200)
+const MSG_TTL_MS = Number(process.env.MSG_TTL_MS || 5 * 60 * 1000)
 
 if (ADMIN_KEY && ADMIN_KEY.length < 16) {
   console.error('FATAL: ADMIN_KEY must be at least 16 chars. Example:')
@@ -42,8 +51,9 @@ let db = { agents: [], messages: [] }
 try {
   db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))
   db.agents ||= []
-  db.messages ||= []
 } catch { /* fresh start */ }
+// messages are ephemeral: RAM only, never loaded from or written to disk
+db.messages = []
 
 // migrate pre-hash records: tokens are stored only as sha256 digests at rest
 for (const a of db.agents) {
@@ -53,14 +63,23 @@ for (const a of db.agents) {
 let saveTimer = null
 function save() {
   // debounce writes; atomic rename so a crash never corrupts the file
+  // NOTE: persists agents only — messages must never touch disk
   if (saveTimer) return
   saveTimer = setTimeout(() => {
     saveTimer = null
     const tmp = DATA_FILE + '.tmp'
-    fs.writeFileSync(tmp, JSON.stringify(db))
+    fs.writeFileSync(tmp, JSON.stringify({ agents: db.agents }))
     fs.renameSync(tmp, DATA_FILE)
   }, 100)
 }
+
+// sweep expired messages (TTL); cheap head-check since messages are ts-ordered
+setInterval(() => {
+  const cutoff = Date.now() - MSG_TTL_MS
+  if (db.messages.length && db.messages[0].ts < cutoff) {
+    db.messages = db.messages.filter((m) => m.ts >= cutoff)
+  }
+}, 15_000).unref()
 
 // ---------- helpers ----------
 
@@ -120,6 +139,14 @@ function findAgent(token) {
 
 const TIERS = ['normal', 'warning', 'emergency']
 
+// seq must stay monotonic across restarts (clients keep cursors); ms clock +
+// bump-on-collision gives that without persisting a counter
+let lastSeq = Date.now()
+const nextSeq = () => (lastSeq = Math.max(lastSeq + 1, Date.now()))
+
+// X25519 public key, base64 spki-der (44 bytes → 60 chars); loose upper bound
+const validPubKey = (s) => typeof s === 'string' && s.length > 0 && s.length <= 200 && /^[A-Za-z0-9+/=]+$/.test(s)
+
 // landing page (served at GET /) — optional, hub works without it
 let HOMEPAGE = null
 try { HOMEPAGE = fs.readFileSync(new URL('./index.html', import.meta.url), 'utf8') } catch { /* absent */ }
@@ -163,7 +190,7 @@ async function handle(req, res) {
   const token = bearer(req)
 
   // public
-  if (route === 'GET /health') return json(res, 200, { ok: true, open: !ADMIN_KEY, agents: db.agents.filter(a => !a.revoked).length, messages: db.messages.length })
+  if (route === 'GET /health') return json(res, 200, { ok: true, open: !ADMIN_KEY, e2e: true, ttlMs: MSG_TTL_MS, agents: db.agents.filter(a => !a.revoked).length, messages: db.messages.length })
   if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD') && HOMEPAGE) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' })
     return res.end(req.method === 'HEAD' ? undefined : HOMEPAGE)
@@ -198,7 +225,8 @@ async function handle(req, res) {
       if (!name || name.length > 64) return json(res, 400, { error: 'name required (max 64 chars)' })
       if (db.agents.some((a) => !a.revoked && a.name === name)) return json(res, 409, { error: `agent name "${name}" already exists` })
       const tok = newToken()
-      const agent = { id: newId('agt'), name, tokenHash: hashToken(tok), createdAt: Date.now(), lastSeen: null, revoked: false }
+      const pubKey = validPubKey(body.pubKey) ? body.pubKey : null
+      const agent = { id: newId('agt'), name, tokenHash: hashToken(tok), pubKey, createdAt: Date.now(), lastSeen: null, revoked: false }
       db.agents.push(agent)
       save()
       return json(res, 201, { agentId: agent.id, name: agent.name, token: tok })
@@ -225,52 +253,78 @@ async function handle(req, res) {
 
   if (route === 'POST /refresh') {
     // rotate the caller's own token: old one stops working immediately,
-    // identity (id, name, history) is preserved
+    // identity (id, name, history) is preserved. Optionally (re)registers the
+    // caller's encryption public key.
+    const body = await readBody(req)
     const tok = newToken()
     agent.tokenHash = hashToken(tok)
+    if (validPubKey(body.pubKey)) agent.pubKey = body.pubKey
     save()
     return json(res, 200, { agentId: agent.id, name: agent.name, token: tok })
   }
 
   if (route === 'POST /messages') {
     const body = await readBody(req)
-    const text = String(body.text || '').trim()
-    if (!text) return json(res, 400, { error: 'text required' })
     const tier = TIERS.includes(body.tier) ? body.tier : 'normal'
     const to = body.to ? String(body.to).slice(0, 64) : null
-    if (to && !db.agents.some((a) => !a.revoked && a.name === to)) return json(res, 400, { error: `unknown recipient "${to}"` })
+    const recipient = to ? db.agents.find((a) => !a.revoked && a.name === to) : null
+    if (to && !recipient) return json(res, 400, { error: `unknown recipient "${to}" — they may have left or rotated identity` })
     const replyTo = body.replyTo ? String(body.replyTo).slice(0, 64) : null
+    // routing metadata stays plaintext (see privacy model, top of file)
     const msg = {
       id: newId('msg'),
-      seq: (db.messages.at(-1)?.seq || 0) + 1,
+      seq: nextSeq(),
       ts: Date.now(),
       agentId: agent.id,
       agent: agent.name,
       tier,
       to,
       replyTo,
-      text: text.slice(0, 64 * 1024),
-      files: Array.isArray(body.files) ? body.files.slice(0, 50).map(String) : [],
+    }
+    if (body.e2e && typeof body.e2e === 'object') {
+      // sealed body: { epk, iv, ct, keys: { agentName: wrappedKey } } — all
+      // opaque to the hub; validate shape/size only
+      const { epk, iv, ct, keys } = body.e2e
+      if (!validPubKey(epk) || typeof iv !== 'string' || iv.length > 64 ||
+          typeof ct !== 'string' || ct.length > 128 * 1024 ||
+          !keys || typeof keys !== 'object' || Array.isArray(keys)) {
+        return json(res, 400, { error: 'malformed e2e payload' })
+      }
+      const entries = Object.entries(keys).slice(0, MAX_AGENTS)
+      if (entries.some(([k, v]) => k.length > 64 || typeof v !== 'string' || v.length > 300)) {
+        return json(res, 400, { error: 'malformed e2e key map' })
+      }
+      msg.e2e = { v: 1, epk, iv, ct, keys: Object.fromEntries(entries) }
+    } else {
+      // legacy plaintext path (old clients); new clients always send e2e
+      const text = String(body.text || '').trim()
+      if (!text) return json(res, 400, { error: 'text or e2e required' })
+      msg.text = text.slice(0, 64 * 1024)
+      msg.files = Array.isArray(body.files) ? body.files.slice(0, 50).map(String) : []
     }
     db.messages.push(msg)
     if (db.messages.length > MAX_MESSAGES) db.messages = db.messages.slice(-MAX_MESSAGES)
-    save()
+    // deliberately no save(): messages are RAM-only
     broadcast(msg)
-    return json(res, 201, { id: msg.id, seq: msg.seq })
+    const delivery = recipient
+      ? { delivery: [...sseClients].some((c) => c.agentId === recipient.id) ? 'live' : 'offline', recipientLastSeen: recipient.lastSeen }
+      : {}
+    return json(res, 201, { id: msg.id, seq: msg.seq, ttlMs: MSG_TTL_MS, ...delivery })
   }
 
   if (route === 'GET /messages') {
     const since = Number(url.searchParams.get('since') || 0)
     const limit = Math.min(Number(url.searchParams.get('limit') || 200), 500)
     const excludeSelf = url.searchParams.get('exclude_self') === '1'
-    let msgs = db.messages.filter((m) => m.seq > since)
+    const cutoff = Date.now() - MSG_TTL_MS
+    let msgs = db.messages.filter((m) => m.seq > since && m.ts >= cutoff)
     if (excludeSelf) msgs = msgs.filter((m) => m.agentId !== agent.id)
     msgs = msgs.slice(-limit)
     return json(res, 200, { messages: msgs, cursor: db.messages.at(-1)?.seq || since })
   }
 
   if (route === 'GET /agents') {
-    return json(res, 200, db.agents.filter(a => !a.revoked).map(({ id, name, lastSeen }) => ({ id, name, lastSeen, you: id === agent.id })))
+    return json(res, 200, db.agents.filter(a => !a.revoked).map(({ id, name, lastSeen, pubKey }) => ({ id, name, lastSeen, pubKey: pubKey || null, you: id === agent.id })))
   }
 
   if (route === 'GET /stream') {

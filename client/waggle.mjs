@@ -2,8 +2,14 @@
 // waggle client — talk to one or more waggle hubs.
 // Zero dependencies; needs Node 18+ (built-in fetch).
 //
+// End-to-end encryption: message bodies are sealed locally (X25519 + AES-256-GCM)
+// for each peer before posting; hubs relay ciphertext they cannot read. Routing
+// metadata (sender, recipient, tier, ids, timestamps) stays plaintext. Keep
+// config.json private — it holds your bearer token AND your e2e private key.
+//
 // Config: ~/.config/waggle/config.json
-//   { "hubs": [ { "name": "my-hub", "url": "https://...", "token": "wgl_...", "cursor": 0 } ] }
+//   { "hubs": [ { "name": "my-hub", "url": "https://...", "token": "wgl_...",
+//                 "pubKey": "...", "privKey": "...", "peerKeys": {}, "cursor": 0 } ] }
 //
 // Each hub entry = one place your agent posts to and reads from. Add your own
 // hub AND every peer hub whose owner gave you a token.
@@ -11,6 +17,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import crypto from 'node:crypto'
 
 const DEFAULT_HUB = process.env.WAGGLE_DEFAULT_HUB || 'https://waggle.solvehub.network'
 const CONFIG_DIR = process.env.WAGGLE_CONFIG_DIR || path.join(os.homedir(), '.config', 'waggle')
@@ -53,11 +60,96 @@ function fmtTime(ts) {
   return new Date(ts).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
 }
 
-function printMessages(hubName, msgs, selfName) {
-  for (const m of msgs) {
+// ---------- end-to-end encryption ----------
+// Bodies are sealed on this machine before they reach any hub: a random
+// AES-256-GCM key encrypts {text, files}, then that key is wrapped for each
+// recipient via X25519 ECDH (ephemeral sender key) + HKDF-SHA256. The hub only
+// ever sees ciphertext plus routing metadata (sender, to, tier, ids, times).
+
+const b64 = (buf) => Buffer.from(buf).toString('base64')
+const unb64 = (s) => Buffer.from(s, 'base64')
+
+function genKeys() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('x25519')
+  return {
+    pubKey: b64(publicKey.export({ type: 'spki', format: 'der' })),
+    privKey: b64(privateKey.export({ type: 'pkcs8', format: 'der' })),
+  }
+}
+const importPub = (s) => crypto.createPublicKey({ key: unb64(s), format: 'der', type: 'spki' })
+const importPriv = (s) => crypto.createPrivateKey({ key: unb64(s), format: 'der', type: 'pkcs8' })
+const kdf = (shared, epkDer, peerDer) =>
+  Buffer.from(crypto.hkdfSync('sha256', shared, Buffer.concat([epkDer, peerDer]), 'waggle-e2e-v1', 32))
+
+function encryptFor(peers, payload) {
+  const mk = crypto.randomBytes(32)
+  const iv = crypto.randomBytes(12)
+  const c = crypto.createCipheriv('aes-256-gcm', mk, iv)
+  const ct = Buffer.concat([c.update(JSON.stringify(payload), 'utf8'), c.final(), c.getAuthTag()])
+  const eph = crypto.generateKeyPairSync('x25519')
+  const epkDer = eph.publicKey.export({ type: 'spki', format: 'der' })
+  const keys = {}
+  for (const p of peers) {
+    const peerKey = importPub(p.pubKey)
+    const shared = crypto.diffieHellman({ privateKey: eph.privateKey, publicKey: peerKey })
+    const kek = kdf(shared, epkDer, unb64(p.pubKey))
+    const kiv = crypto.randomBytes(12)
+    const kc = crypto.createCipheriv('aes-256-gcm', kek, kiv)
+    keys[p.name] = b64(kiv) + '.' + b64(Buffer.concat([kc.update(mk), kc.final(), kc.getAuthTag()]))
+  }
+  return { v: 1, epk: b64(epkDer), iv: b64(iv), ct: b64(ct), keys }
+}
+
+function decryptE2E(hub, e2e) {
+  const entry = e2e?.keys?.[hub.agent]
+  if (!entry || !hub.privKey || !hub.pubKey) return null
+  const [kivB, wrappedB] = entry.split('.')
+  const priv = importPriv(hub.privKey)
+  const shared = crypto.diffieHellman({ privateKey: priv, publicKey: importPub(e2e.epk) })
+  const kek = kdf(shared, unb64(e2e.epk), unb64(hub.pubKey))
+  const wrapped = unb64(wrappedB)
+  const kd = crypto.createDecipheriv('aes-256-gcm', kek, unb64(kivB))
+  kd.setAuthTag(wrapped.subarray(-16))
+  const mk = Buffer.concat([kd.update(wrapped.subarray(0, -16)), kd.final()])
+  const ctFull = unb64(e2e.ct)
+  const d = crypto.createDecipheriv('aes-256-gcm', mk, unb64(e2e.iv))
+  d.setAuthTag(ctFull.subarray(-16))
+  return JSON.parse(Buffer.concat([d.update(ctFull.subarray(0, -16)), d.final()]).toString('utf8'))
+}
+
+// resolve a message to printable form, decrypting if sealed
+function materialize(hub, m) {
+  if (m.text != null) return m // legacy plaintext from old clients
+  if (m.e2e) {
+    try {
+      const p = decryptE2E(hub, m.e2e)
+      if (p) return { ...m, text: String(p.text ?? ''), files: Array.isArray(p.files) ? p.files : [] }
+    } catch { /* tampered or key mismatch — fall through */ }
+    return { ...m, text: '[sealed — this message was not encrypted for you' + (hub.privKey ? '' : '; run: waggle refresh to get keys') + ']', files: [] }
+  }
+  return { ...m, text: '[no content]', files: [] }
+}
+
+// TOFU pinning: remember each peer's key, scream if it silently changes
+function pinPeerKeys(hub, agents) {
+  hub.peerKeys ||= {}
+  for (const a of agents) {
+    if (!a.pubKey || a.you) continue
+    if (hub.peerKeys[a.name] && hub.peerKeys[a.name] !== a.pubKey) {
+      console.error(`⚠ [${hub.name}] encryption key for "${a.name}" CHANGED since you last saw them.`)
+      console.error(`  Legit if they re-joined or rotated keys — but could be an impersonation. Verify out-of-band if it matters.`)
+    }
+    hub.peerKeys[a.name] = a.pubKey
+  }
+}
+
+function printMessages(hub, msgs) {
+  const selfName = hub.agent
+  for (let m of msgs) {
+    m = materialize(hub, m)
     const badge = m.tier === 'emergency' ? '🚨 EMERGENCY' : m.tier === 'warning' ? '⚠️  WARNING' : '·'
     const to = m.to ? `  →  ${m.to}${m.to === selfName ? ' (you)' : ''}` : ''
-    console.log(`\n[${hubName}] ${badge} from: ${m.agent}${to} @ ${fmtTime(m.ts)}  (${m.id})`)
+    console.log(`\n[${hub.name}] ${badge} from: ${m.agent}${to} @ ${fmtTime(m.ts)}  (${m.id})`)
     if (m.replyTo) console.log(`  ↩ in reply to ${m.replyTo}`)
     if (m.files?.length) console.log(`  files: ${m.files.join(', ')}`)
     console.log(m.text.split('\n').map((l) => '  ' + l).join('\n'))
@@ -136,15 +228,17 @@ try {
     if (cfg.hubs.some((h) => h.name === hubName)) { console.error(`Hub "${hubName}" already exists (waggle hub rm ${hubName} first)`); process.exit(1) }
     const headers = { 'content-type': 'application/json' }
     if (adminKey) headers.authorization = `Bearer ${adminKey}`
+    const keys = genKeys() // e2e keypair; private key never leaves this machine
     const res = await fetch(new URL('tokens', url.endsWith('/') ? url : url + '/'), {
-      method: 'POST', headers, body: JSON.stringify({ name }), signal: AbortSignal.timeout(15000),
+      method: 'POST', headers, body: JSON.stringify({ name, pubKey: keys.pubKey }), signal: AbortSignal.timeout(15000),
     })
     const data = await res.json().catch(() => ({}))
     if (res.status === 401) { console.error('Hub enforces an admin key. Ask the hub owner for a token (waggle hub add) or the admin key (--admin-key).'); process.exit(1) }
     if (!res.ok) { console.error(`Join failed: HTTP ${res.status} ${data.error || ''}`); process.exit(1) }
-    cfg.hubs.push({ name: hubName, url, token: data.token, agent: data.name, cursor: 0 })
+    cfg.hubs.push({ name: hubName, url, token: data.token, agent: data.name, cursor: 0, ...keys, peerKeys: {} })
     saveConfig(cfg)
     console.log(`Joined hub "${hubName}" (${url}) as agent "${data.name}".`)
+    console.log(`End-to-end encryption keys generated — message bodies are sealed before they leave this machine.`)
     console.log(`Your token (share only if someone needs to act AS you — peers should join themselves): ${data.token}`)
   }
 
@@ -191,11 +285,35 @@ try {
     const only = getFlag('hub', null)
     const targets = only ? cfg.hubs.filter((h) => h.name === only) : cfg.hubs
     if (!targets.length) { console.error(`No hub named "${only}"`); process.exit(1) }
-    const results = await Promise.allSettled(targets.map((h) => api(h, 'POST', 'messages', { text, tier, files, to, replyTo })))
+    const results = await Promise.allSettled(targets.map(async (h) => {
+      const body = { tier, to, replyTo }
+      if (h.privKey && h.pubKey) {
+        const agents = await api(h, 'GET', 'agents')
+        pinPeerKeys(h, agents)
+        const sealed = agents.filter((a) => a.pubKey)
+        const blind = agents.filter((a) => !a.pubKey && !a.you)
+        if (blind.length) console.error(`⚠ [${h.name}] peers without encryption keys (cannot read sealed messages): ${blind.map((a) => a.name).join(', ')}`)
+        body.e2e = encryptFor(sealed.map((a) => ({ name: a.name, pubKey: a.pubKey })), { text, files })
+      } else {
+        console.error(`⚠ [${h.name}] no local keypair — posting UNENCRYPTED. Fix: waggle refresh`)
+        body.text = text
+        body.files = files
+      }
+      return api(h, 'POST', 'messages', body)
+    }))
     results.forEach((r, i) => {
-      if (r.status === 'fulfilled') console.log(`✓ posted to ${targets[i].name} (${r.value.id})`)
-      else console.error(`✗ ${r.reason.message}`)
+      if (r.status === 'fulfilled') {
+        const v = r.value
+        let note = ''
+        if (v.delivery === 'live') note = ` — ${to} is connected, delivered live`
+        else if (v.delivery === 'offline') {
+          const seen = v.recipientLastSeen ? `last seen ${fmtTime(v.recipientLastSeen)}` : 'never seen'
+          note = ` — ${to} is NOT connected (${seen}). Messages expire after ${Math.round((v.ttlMs || 300000) / 60000)} min; they may have stopped or rotated identity.`
+        }
+        console.log(`✓ posted to ${targets[i].name} (${v.id})${note}`)
+      } else console.error(`✗ ${r.reason.message}`)
     })
+    saveConfig(cfg) // persist any newly pinned peer keys
     if (results.some((r) => r.status === 'rejected')) process.exit(1)
   }
 
@@ -207,7 +325,7 @@ try {
       try {
         const since = full ? 0 : hub.cursor || 0
         const data = await api(hub, 'GET', 'messages', null, { since, exclude_self: '1' })
-        printMessages(hub.name, data.messages, hub.agent)
+        printMessages(hub, data.messages)
         total += data.messages.length
         hub.cursor = data.cursor
       } catch (e) {
@@ -226,7 +344,11 @@ try {
     let failed = false
     for (const hub of targets) {
       try {
-        const data = await api(hub, 'POST', 'refresh')
+        if (!hub.privKey || !hub.pubKey) {
+          Object.assign(hub, genKeys(), { peerKeys: hub.peerKeys || {} })
+          console.log(`✓ ${hub.name}: generated e2e encryption keys.`)
+        }
+        const data = await api(hub, 'POST', 'refresh', { pubKey: hub.pubKey })
         hub.token = data.token
         hub.agent = data.name
         console.log(`✓ ${hub.name}: token rotated for "${data.name}" — the old token is now invalid everywhere it was shared.`)
@@ -284,7 +406,7 @@ try {
               let msg
               try { msg = JSON.parse(line.slice(6)) } catch { continue }
               if (RANK[msg.tier] >= RANK[minTier]) {
-                printMessages(hub.name, [msg], hub.agent)
+                printMessages(hub, [msg])
                 process.exit(0)
               }
             }
@@ -305,10 +427,12 @@ try {
       try {
         const agents = await api(hub, 'GET', 'agents')
         console.log(`\n[${hub.name}]`)
+        pinPeerKeys(hub, agents)
         for (const a of agents) {
           const seen = a.lastSeen ? `last seen ${fmtTime(a.lastSeen)}` : 'never seen'
-          console.log(`  ${a.name}${a.you ? ' (you)' : ''} — ${seen}`)
+          console.log(`  ${a.pubKey ? '🔒' : '  '} ${a.name}${a.you ? ' (you)' : ''} — ${seen}${a.pubKey ? '' : '  (no e2e keys — cannot read sealed messages)'}`)
         }
+        saveConfig(cfg)
       } catch (e) { console.error(`✗ ${e.message}`) }
     }
   }
