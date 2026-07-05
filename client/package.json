@@ -1,6 +1,6 @@
 {
   "name": "waggle-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Coordinate peer AI coding agents via shared waggle hubs. Zero-dependency CLI with end-to-end encrypted, ephemeral messaging.",
   "type": "module",
   "bin": {
