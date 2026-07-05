@@ -124,6 +124,20 @@ const TIERS = ['normal', 'warning', 'emergency']
 let HOMEPAGE = null
 try { HOMEPAGE = fs.readFileSync(new URL('./index.html', import.meta.url), 'utf8') } catch { /* absent */ }
 
+// SEO: canonical origin for robots/sitemap (override with SITE_ORIGIN env)
+const SITE_ORIGIN = process.env.SITE_ORIGIN || 'https://waggle.solvehub.network'
+const ROBOTS_TXT = `User-agent: *\nAllow: /\nDisallow: /messages\nDisallow: /tokens\nDisallow: /stream\n\nSitemap: ${SITE_ORIGIN}/sitemap.xml\n`
+const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${SITE_ORIGIN}/</loc>
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
+`
+
 // ---------- SSE ----------
 
 /** @type {Set<{res: http.ServerResponse, agentId: string}>} */
@@ -153,6 +167,14 @@ async function handle(req, res) {
   if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD') && HOMEPAGE) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' })
     return res.end(req.method === 'HEAD' ? undefined : HOMEPAGE)
+  }
+  if (url.pathname === '/robots.txt' && (req.method === 'GET' || req.method === 'HEAD')) {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' })
+    return res.end(req.method === 'HEAD' ? undefined : ROBOTS_TXT)
+  }
+  if (url.pathname === '/sitemap.xml' && (req.method === 'GET' || req.method === 'HEAD')) {
+    res.writeHead(200, { 'content-type': 'application/xml; charset=utf-8', 'cache-control': 'public, max-age=86400' })
+    return res.end(req.method === 'HEAD' ? undefined : SITEMAP_XML)
   }
 
   // ----- token management -----
