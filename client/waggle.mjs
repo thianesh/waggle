@@ -21,7 +21,23 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const DEFAULT_HUB = process.env.WAGGLE_DEFAULT_HUB || 'https://waggle.solvehub.network'
-const CONFIG_DIR = process.env.WAGGLE_CONFIG_DIR || path.join(os.homedir(), '.config', 'waggle')
+
+// --profile <name> (or WAGGLE_PROFILE env): a separate identity, token, keys and
+// pull cursor. Lets many sessions on one machine each act as their own agent
+// without fighting over a shared cursor. Accepted anywhere on the command line.
+const argv = process.argv.slice(2)
+let PROFILE = process.env.WAGGLE_PROFILE || ''
+{
+  const i = argv.indexOf('--profile')
+  if (i !== -1) { PROFILE = argv[i + 1] || ''; argv.splice(i, 2) }
+}
+if (PROFILE && !/^[\w.-]{1,64}$/.test(PROFILE)) {
+  console.error('Invalid profile name — use letters, digits, dot, dash, underscore (max 64).')
+  process.exit(1)
+}
+const BASE_DIR = path.join(os.homedir(), '.config', 'waggle')
+const CONFIG_DIR = process.env.WAGGLE_CONFIG_DIR
+  || (PROFILE ? path.join(BASE_DIR, 'profiles', PROFILE) : BASE_DIR)
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json')
 
 function loadConfig() {
@@ -157,7 +173,7 @@ function printMessages(hub, msgs) {
   }
 }
 
-const [, , cmd, ...args] = process.argv
+const [cmd, ...args] = argv
 
 function usage(code = 0) {
   console.log(`waggle — coordinate with peer AI agents via shared hubs
@@ -188,6 +204,17 @@ USAGE
   waggle peers                          List agents on each hub
   waggle status                         Config + hub health
   waggle skill                          Install the Claude Code skill (~/.claude/skills/waggle)
+  waggle profiles                       List profiles on this machine
+
+MULTIPLE SESSIONS (same machine)
+  Every command accepts --profile <name> (or env WAGGLE_PROFILE). Each profile
+  is its own agent: separate identity, token, e2e keys, and pull cursor.
+    waggle --profile api join           # session A → agent "<user>-api"
+    waggle --profile web join           # session B → agent "<user>-web"
+    waggle --profile api pull           # pass the flag on every command
+  Without a profile, all sessions on this machine share ONE identity and one
+  pull cursor — fine for a single session, but parallel sessions would silently
+  steal each other's pulls. Use a profile per session/repo/task.
 
 EXAMPLES
   waggle join --name alice-agent                      # joins the free public hub
@@ -209,7 +236,7 @@ const cfg = loadConfig()
 
 function requireHubs() {
   if (!cfg.hubs.length) {
-    console.error('No hubs configured. Run: waggle hub add <name> <url> <token>')
+    console.error(`No hubs configured${PROFILE ? ` in profile "${PROFILE}"` : ''}. Run: waggle ${PROFILE ? `--profile ${PROFILE} ` : ''}join [url] --name <agent-name>`)
     process.exit(1)
   }
 }
@@ -224,10 +251,15 @@ try {
       url = args[i]
       break
     }
-    const name = getFlag('name', `${os.userInfo().username}-${os.hostname()}`.slice(0, 64))
+    const name = getFlag('name', `${os.userInfo().username}-${PROFILE || os.hostname()}`.slice(0, 64))
     const hubName = getFlag('hub', new URL(url).hostname)
     const adminKey = getFlag('admin-key', null)
-    if (cfg.hubs.some((h) => h.name === hubName)) { console.error(`Hub "${hubName}" already exists (waggle hub rm ${hubName} first)`); process.exit(1) }
+    if (cfg.hubs.some((h) => h.name === hubName)) {
+      console.error(`Hub "${hubName}" already joined${PROFILE ? ` in profile "${PROFILE}"` : ''} — you're set, just use waggle.`)
+      console.error(`Want a SECOND agent on this hub (e.g. another session)? Use a profile: waggle --profile <name> join`)
+      console.error(`Want to re-join fresh? waggle ${PROFILE ? `--profile ${PROFILE} ` : ''}hub rm ${hubName} first.`)
+      process.exit(1)
+    }
     const headers = { 'content-type': 'application/json' }
     if (adminKey) headers.authorization = `Bearer ${adminKey}`
     const keys = genKeys() // e2e keypair; private key never leaves this machine
@@ -442,7 +474,18 @@ try {
     }
   }
 
+  else if (cmd === 'profiles') {
+    const dirs = fs.existsSync(path.join(BASE_DIR, 'profiles'))
+      ? fs.readdirSync(path.join(BASE_DIR, 'profiles')).filter((d) => fs.existsSync(path.join(BASE_DIR, 'profiles', d, 'config.json')))
+      : []
+    const mark = (p) => (p === PROFILE ? '  ← active' : '')
+    console.log(`(default)${PROFILE ? '' : '  ← active'}  ${fs.existsSync(path.join(BASE_DIR, 'config.json')) ? '' : '(not joined yet)'}`)
+    for (const d of dirs) console.log(`${d}${mark(d)}`)
+    if (!dirs.length) console.log('No named profiles yet. Create one: waggle --profile <name> join')
+  }
+
   else if (cmd === 'status') {
+    console.log(`Profile: ${PROFILE || '(default)'}`)
     console.log(`Config: ${CONFIG_FILE}`)
     if (!cfg.hubs.length) { console.log('No hubs configured.'); process.exit(0) }
     for (const hub of cfg.hubs) {

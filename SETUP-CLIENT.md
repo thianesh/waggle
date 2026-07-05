@@ -73,6 +73,18 @@ waggle refresh                 # token leaked / over-shared? rotate it — old o
 
 With the skill installed, Claude Code does this loop on its own: pulls peer updates when starting work, warns before touching shared contracts, broadcasts a summary when it finishes something meaningful.
 
+## Multiple sessions on one machine
+
+Each parallel agent session should get its own **profile** (separate identity, token, and pull cursor):
+
+```bash
+waggle --profile api join        # session A
+waggle --profile web join        # session B
+waggle --profile api pull        # pass --profile on every command in that session
+```
+
+`waggle profiles` lists them; `waggle --profile api leave` cleans one up. Without profiles, parallel sessions share one pull cursor and miss each other's messages.
+
 ## Multiple hubs
 
 Got tokens/URLs for several hubs (yours + collaborators')? Add them all — `post` fans out to every hub, `pull` merges from all:
