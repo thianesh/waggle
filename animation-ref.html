@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>waggle — bee dance</title>
+<style>
+  :root{
+    --bg:#080604;
+    --panel:#120d09;
+    --border:#261b0f;
+    --border-hi:#3e2d17;
+    --text:#e6ddcb;
+    --head:#f9f3e6;
+    --dim:#93866d;
+    --honey:#ffb454;
+    --honey-deep:#b4690e;
+    --green:#8fd460;
+    --yellow:#e6b450;
+    --glow:rgba(255,176,64,.16);
+    --mono:ui-monospace,'SF Mono','Cascadia Code','JetBrains Mono',Menlo,Consolas,monospace;
+    --serif:'Fraunces','Iowan Old Style',Georgia,'Times New Roman',serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--bg)}
+
+  .split{display:flex;height:100vh;width:100vw}
+
+  /* ---------- LEFT : bee stage ---------- */
+  .stage{
+    position:relative;
+    flex:0 0 50%;
+    height:100%;
+    background:
+      radial-gradient(1200px 700px at 50% 30%, var(--glow), transparent 60%),
+      var(--bg);
+    border-right:1px solid var(--border-hi);
+    display:flex;align-items:center;justify-content:center;
+    overflow:hidden;
+  }
+  /* film grain, same trick as site */
+  .stage::after{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity:.10;mix-blend-mode:screen;
+  }
+  /* faint honeycomb */
+  .comb{position:absolute;inset:0;opacity:.05;pointer-events:none}
+  .comb svg{width:100%;height:100%}
+
+  .stage svg.scene{width:min(80%,640px);height:auto;position:relative;z-index:2}
+
+  .caption{
+    position:absolute;bottom:6%;left:0;right:0;text-align:center;z-index:3;
+    padding:0 24px;
+    font-family:var(--mono);font-size:13px;color:var(--dim);letter-spacing:.08em;
+  }
+  .caption b{color:var(--honey);font-weight:600}
+  .caption .g{color:var(--green)}
+  .title{
+    position:absolute;top:7%;left:0;right:0;text-align:center;z-index:3;
+    padding:16px 32px;
+    font-family:var(--serif);font-style:italic;font-weight:600;
+    font-size:clamp(22px,3vw,34px);color:var(--head);
+  }
+  .title span{color:var(--honey)}
+
+  /* dashed figure-8 trail */
+  .trail{
+    fill:none;stroke:var(--dim);stroke-width:1.4;
+    stroke-dasharray:3 7;stroke-linecap:round;opacity:.45;
+    animation:trailflow 2.2s linear infinite;
+  }
+  @keyframes trailflow{to{stroke-dashoffset:-10}}
+  .waggle-line{
+    fill:none;stroke:var(--honey);stroke-width:2;
+    stroke-dasharray:2 6;stroke-linecap:round;opacity:.55;
+    animation:trailflow 1.1s linear infinite;
+  }
+
+  /* wing flap */
+  /* pivot = static position at thorax (SVG attr); inner .wing does the flap (CSS)
+     so the two transforms don't fight each other */
+  .wing{transform-origin:0px 0px;animation:flap .12s ease-in-out infinite alternate}
+  .wing.right{animation-delay:.06s}
+  @keyframes flap{
+    from{transform:rotate(-14deg) scaleY(.9)}
+    to{transform:rotate(12deg) scaleY(1.05)}
+  }
+
+  .bee-glow{filter:drop-shadow(0 0 14px rgba(255,180,84,.55)) drop-shadow(0 0 34px rgba(255,180,84,.25))}
+
+  /* spectator bees: watching, attentive sway */
+  .spectator{opacity:.88;filter:drop-shadow(0 0 8px rgba(255,180,84,.3))}
+  .sway{animation:sway 1.8s ease-in-out infinite alternate;transform-origin:0 0}
+  @keyframes sway{
+    from{transform:rotate(-5deg) translateX(0)}
+    to{transform:rotate(5deg) translateX(2px)}
+  }
+
+  /* ---------- RIGHT : live page ---------- */
+  /* Site bug: .hrow{padding:13px 0} kills .wrap's 26px side padding, so its
+     header goes flush below 1132px. Workaround: render iframe wider than the
+     site's 1080px max-width (auto-margins give the header side space), then
+     scale to fit the pane. */
+  .page{flex:0 0 50%;height:100%;background:var(--panel);overflow:hidden}
+  .page iframe{width:100%;height:100%;border:0;display:block;transform-origin:0 0}
+
+  /* stack on small screens */
+  @media(max-width:860px){
+    html,body{overflow:auto}
+    .split{flex-direction:column;height:auto}
+    .stage{flex:none;height:60vh;border-right:0;border-bottom:1px solid var(--border-hi)}
+    .page{flex:none;height:100vh}
+  }
+</style>
+</head>
+<body>
+<div class="split">
+
+  <!-- LEFT 50% : honeybee waggle dance -->
+  <div class="stage">
+    <div class="comb">
+      <svg xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <pattern id="hex" width="56" height="97" patternUnits="userSpaceOnUse" patternTransform="scale(1)">
+            <polygon points="28,0 56,16 56,48 28,64 0,48 0,16" fill="none" stroke="#ffb454" stroke-width="1"/>
+            <polygon points="28,64 56,80 56,112 28,128 0,112 0,80" fill="none" stroke="#ffb454" stroke-width="1" transform="translate(0,-15.5)"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#hex)"/>
+      </svg>
+    </div>
+
+    <div class="title">the <span>waggle</span> dance</div>
+
+    <svg class="scene" viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg">
+      <!-- figure-8 guide trail -->
+      <path id="trailPath" class="trail" d=""/>
+      <!-- central waggle run, highlighted -->
+      <line class="waggle-line" x1="300" y1="430" x2="300" y2="170"/>
+
+      <!-- bee -->
+      <g id="bee" class="bee-glow">
+        <g id="beeBody">
+          <!-- abdomen: honey striped -->
+          <g id="abdomen">
+            <ellipse cx="-16" cy="0" rx="20" ry="13" fill="#e6b450"/>
+            <path d="M -8 -12.4 a 20 13 0 0 0 0 24.8 l -6 0 a 20 13 0 0 1 0 -24.8 z" fill="#201a0e"/>
+            <path d="M -22 -12.2 a 20 13 0 0 0 -2 24.4 l -6 -1.2 a 20 13 0 0 1 1 -22 z" fill="#201a0e"/>
+            <path d="M -33 -7 a 20 13 0 0 0 0 14 q -4 -3.5 -4 -7 q 0 -3.5 4 -7 z" fill="#201a0e"/>
+            <!-- stinger -->
+            <path d="M -36 0 l -7 0" stroke="#201a0e" stroke-width="2.4" stroke-linecap="round"/>
+          </g>
+
+          <!-- wings: pivot at thorax (~x=4), sweep BACK toward abdomen and out.
+               upper wing -> back-up (rotate -150), lower -> back-down (rotate 150).
+               ellipse cx=16 => base at pivot, tip trails back over abdomen. -->
+          <g transform="translate(4,-2.5) rotate(-150)">
+            <g class="wing left">
+              <ellipse cx="16" cy="0" rx="18" ry="7.5"
+                       fill="rgba(249,243,230,.32)" stroke="rgba(249,243,230,.55)" stroke-width="1"/>
+            </g>
+          </g>
+          <g transform="translate(4,2.5) rotate(150)">
+            <g class="wing right">
+              <ellipse cx="16" cy="0" rx="18" ry="7.5"
+                       fill="rgba(249,243,230,.28)" stroke="rgba(249,243,230,.5)" stroke-width="1"/>
+            </g>
+          </g>
+
+          <!-- thorax: fuzzy honey -->
+          <circle cx="4" cy="0" r="11" fill="#ffb454"/>
+          <circle cx="4" cy="0" r="11" fill="none" stroke="#ffca7d" stroke-width="2" stroke-dasharray="1.5 3" opacity=".8"/>
+
+          <!-- head -->
+          <circle cx="18" cy="0" r="7.5" fill="#2b2211" stroke="#3e2d17" stroke-width="1"/>
+          <circle cx="20.5" cy="-3.4" r="2.1" fill="#f9f3e6"/>
+          <circle cx="21.1" cy="-3.6" r="0.9" fill="#0d0a06"/>
+          <circle cx="20.5" cy="3.4" r="2.1" fill="#f9f3e6" opacity=".85"/>
+
+          <!-- antennae -->
+          <path d="M 22 -4 q 8 -4 10 -11" fill="none" stroke="#e6ddcb" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M 22 4 q 8 4 10 11" fill="none" stroke="#e6ddcb" stroke-width="1.6" stroke-linecap="round"/>
+          <circle cx="32" cy="-15" r="1.8" fill="#ffb454"/>
+          <circle cx="32" cy="15" r="1.8" fill="#ffb454"/>
+
+          <!-- legs -->
+          <path d="M -2 9 q -3 8 -9 10 M 4 10 q 0 9 -5 12 M 10 9 q 3 8 1 13"
+                fill="none" stroke="#2b2211" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M -2 -9 q -3 -8 -9 -10 M 4 -10 q 0 -9 -5 -12 M 10 -9 q 3 -8 1 -13"
+                fill="none" stroke="#2b2211" stroke-width="1.8" stroke-linecap="round"/>
+        </g>
+      </g>
+
+      <!-- pollen sparkles dropped on waggle run -->
+      <g id="sparkles"></g>
+    </svg>
+
+    <div class="caption">
+      $ bee --dance <b>figure-eight</b> <span class="g">✓ broadcasting to hive</span>
+    </div>
+  </div>
+
+  <!-- RIGHT 50% : full site, scrollable -->
+  <div class="page">
+    <iframe src="https://waggle.solvehub.network/" title="waggle site" loading="eager"></iframe>
+  </div>
+</div>
+
+<script>
+(() => {
+  const NS = 'http://www.w3.org/2000/svg';
+  const bee   = document.getElementById('bee');
+  const body_ = document.getElementById('beeBody');
+  const spark = document.getElementById('sparkles');
+  const scene = bee.ownerSVGElement;
+
+  /* spectator bees: cloned from dancer, placed around dance floor,
+     rotated to face the run line, gentle sway = "reading the dance" */
+  const audience = [
+    {x: 140, y: 480, rot: -48,  s: .92, dur: 1.7, delay: 0},
+    {x: 468, y: 458, rot: -136, s: .88, dur: 2.1, delay: .5},
+    {x: 452, y: 132, rot: 136,  s: .85, dur: 1.5, delay: .9},
+  ];
+  for(const a of audience){
+    const outer = document.createElementNS(NS, 'g');
+    outer.setAttribute('class', 'spectator');
+    outer.setAttribute('transform',
+      `translate(${a.x}, ${a.y}) rotate(${a.rot}) scale(${a.s})`);
+    const sway = document.createElementNS(NS, 'g');
+    sway.setAttribute('class', 'sway');
+    sway.style.animationDuration = a.dur + 's';
+    sway.style.animationDelay = a.delay + 's';
+    const clone = body_.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    sway.appendChild(clone);
+    outer.appendChild(sway);
+    scene.insertBefore(outer, bee);   // behind dancer
+  }
+
+  /* geometry: classic waggle-dance figure-8
+     centre run bottom(300,430) -> top(300,170),
+     right return loop, run again, left return loop  */
+  const CX = 300, Y0 = 430, Y1 = 170, R = 105;
+  const MID = (Y0 + Y1) / 2;
+
+  // draw dashed guide trail (two circles tangent to the run line)
+  const trail = document.getElementById('trailPath');
+  trail.setAttribute('d', [
+    `M ${CX} ${Y1} A ${R} ${(Y1?0:0)+ (Y0-Y1)/2} 0 1 1 ${CX} ${Y0}`,          // right lobe
+    `M ${CX} ${Y1} A ${R} ${(Y0-Y1)/2} 0 1 0 ${CX} ${Y0}`                     // left lobe
+  ].join(' '));
+
+  const easeInOut = t => t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
+
+  /* dance phases (durations ms) */
+  const RUN = 2600, LOOP = 2000;
+  const phases = [
+    {type:'run',  dur:RUN},          // waggle up the middle
+    {type:'loop', dur:LOOP, dir:+1}, // ease-in-out return, right side
+    {type:'run',  dur:RUN},
+    {type:'loop', dur:LOOP, dir:-1}, // left side
+  ];
+  const TOTAL = phases.reduce((s,p)=>s+p.dur,0);
+
+  function pose(tms){
+    let t = tms % TOTAL;
+    for(const p of phases){
+      if(t < p.dur){
+        const k = easeInOut(t / p.dur);
+        if(p.type === 'run'){
+          // straight up, abdomen waggling side to side
+          const y = Y0 + (Y1 - Y0) * k;
+          const WAG_F = 0.02;                             // slower, human-visible waggle
+          const wag = Math.sin(t * WAG_F) * 18;
+          return {x: CX, y, angle: -90 + wag, wag: Math.sin(t * WAG_F)};
+        }else{
+          // semicircular return loop, top -> bottom
+          const a0 = -Math.PI/2, a1 = Math.PI/2;          // sweep half circle
+          const a  = a0 + (a1 - a0) * k;
+          const rx = (Y0 - Y1)/2;
+          const ex = CX + p.dir * R * Math.cos(a);
+          const ey = MID + rx * Math.sin(a);
+          // heading = tangent of ellipse
+          const dx = p.dir * -R * Math.sin(a);
+          const dy = rx * Math.cos(a);
+          const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+          return {x: ex, y: ey, angle, wag: 0};
+        }
+      }
+      t -= p.dur;
+    }
+  }
+
+  /* pollen sparkles during waggle run */
+  let lastSpark = 0;
+  function dropSpark(x, y, now){
+    if(now - lastSpark < 140) return;
+    lastSpark = now;
+    const c = document.createElementNS(NS, 'circle');
+    const j = (Math.random() - .5) * 18;
+    c.setAttribute('cx', x + j); c.setAttribute('cy', y + 6);
+    c.setAttribute('r', 1.5 + Math.random() * 1.8);
+    c.setAttribute('fill', Math.random() < .3 ? '#8fd460' : '#ffb454');
+    c.setAttribute('opacity', '.9');
+    spark.appendChild(c);
+    const born = now;
+    (function fade(){
+      const age = performance.now() - born;
+      if(age > 1400){ c.remove(); return; }
+      c.setAttribute('opacity', String(.9 * (1 - age/1400)));
+      requestAnimationFrame(fade);
+    })();
+  }
+
+  /* fit iframe: internal width > site max-width(1080)+margins so its header
+     gets breathing room, scaled back down to pane width */
+  const pane  = document.querySelector('.page');
+  const frameEl = pane.querySelector('iframe');
+  const INNER = 1160;          // >1132 => ~40px auto-margin each side inside site
+  const MIN_S = 0.68;          // below this text gets too small — show 1:1 instead
+  function fitFrame(){
+    const W = pane.clientWidth, H = pane.clientHeight;
+    const s = W / INNER;
+    if(W >= INNER || s < MIN_S){
+      frameEl.style.width = '100%';
+      frameEl.style.height = '100%';
+      frameEl.style.transform = 'none';
+    }else{
+      frameEl.style.width = INNER + 'px';
+      frameEl.style.height = (H / s) + 'px';
+      frameEl.style.transform = `scale(${s})`;
+    }
+  }
+  addEventListener('resize', fitFrame);
+  fitFrame();
+
+  function frame(now){
+    const p = pose(now);
+    // gentle hover bob everywhere
+    const bob = Math.sin(now * 0.004) * 3;
+    bee.setAttribute('transform',
+      `translate(${p.x}, ${p.y + bob}) rotate(${p.angle}) scale(1.15)`);
+    // abdomen counter-waggle for extra wiggle
+    body_.setAttribute('transform', `rotate(${p.wag * 9})`);
+    if(p.wag !== 0) dropSpark(p.x, p.y, now);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
