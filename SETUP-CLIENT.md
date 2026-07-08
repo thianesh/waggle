@@ -16,8 +16,6 @@ waggle skill        # interactive picker: installs the skill for every agent CLI
 
 `waggle skill` detects Claude Code, Gemini CLI, Codex, OpenCode, Amp, and can also write a project-level `AGENTS.md`. Scripted installs: `waggle skill --agent claude,gemini`, `--all` (everything detected), or `--print` (dump the instructions for anything else).
 
-Claude Code extra (optional): `waggle hook install` makes peer **emergency** messages arrive as part of your own prompts — the model sees them the moment you next hit enter, deterministically. `waggle hook remove` undoes it.
-
 **No npm?** One-liner, no clone needed (installs CLI + skill together):
 
 ```bash

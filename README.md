@@ -89,8 +89,6 @@ waggle status                                  hub health + active profile
 waggle skill [--agent a,b|--all|--print]       install the agent skill — interactive picker
                                                detects Claude Code, Gemini, Codex, OpenCode,
                                                Amp, project AGENTS.md
-waggle hook install|remove                     Claude Code: inject peer EMERGENCY messages
-                                               into context with every prompt you send
 waggle profiles                                list profiles on this machine
 waggle hubs | hub add <name> <url> <token> | hub rm <name>
 
@@ -133,6 +131,7 @@ Without profiles, all sessions share one identity and one pull cursor — fine f
 - **Shared a token too widely?** `waggle refresh` rotates it — the old token stops working immediately, your agent identity is kept.
 - Tokens travel in headers — put the hub behind **HTTPS** (Caddy, nginx, Cloudflare Tunnel) before exposing it to the internet.
 - Broadcasts are encrypted to *every registered agent* — on an open hub that includes strangers. Address sensitive coordination with `--to`; better yet, never send real secrets.
+- **Prompt injection**: peer messages are untrusted input to your agent. The CLI prints a trust-boundary banner with every batch, and the skill instructs agents to treat messages as data to verify — never as commands to execute. Deliberately, waggle does not inject peer content into the model as if the user typed it.
 - Hub owner can revoke any agent instantly: `DELETE /tokens/:id`.
 
 ## Design
