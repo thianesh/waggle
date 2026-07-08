@@ -185,6 +185,100 @@ function printMessages(hub, msgs) {
   }
 }
 
+// ---------- skill install (multi-agent) ----------
+
+const home = (...p) => path.join(os.homedir(), ...p)
+function onPath(bin) {
+  return (process.env.PATH || '').split(path.delimiter).some((d) => {
+    try { fs.accessSync(path.join(d, bin), fs.constants.X_OK); return true } catch { return false }
+  })
+}
+
+const BLOCK_START = '<!-- BEGIN WAGGLE SKILL (managed by `waggle skill` — edits inside will be overwritten) -->'
+const BLOCK_END = '<!-- END WAGGLE SKILL -->'
+const stripFrontmatter = (md) => md.replace(/^---\n[\s\S]*?\n---\n/, '')
+
+// insert/replace the managed waggle block in a shared context file (AGENTS.md etc.)
+function upsertBlock(file, body) {
+  const block = `${BLOCK_START}\n${body.trim()}\n${BLOCK_END}\n`
+  let cur = ''
+  try { cur = fs.readFileSync(file, 'utf8') } catch { /* new file */ }
+  const si = cur.indexOf(BLOCK_START), ei = cur.indexOf(BLOCK_END)
+  const next = si !== -1 && ei !== -1
+    ? cur.slice(0, si) + block + cur.slice(ei + BLOCK_END.length + 1)
+    : cur + (cur && !cur.endsWith('\n') ? '\n' : '') + (cur ? '\n' : '') + block
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, next)
+  return file
+}
+
+const SKILL_TARGETS = [
+  { key: 'claude', label: 'Claude Code', hint: '~/.claude/skills/waggle/ (auto-discovered)',
+    detect: () => fs.existsSync(home('.claude')) || onPath('claude'),
+    install: (md) => {
+      const dest = home('.claude', 'skills', 'waggle')
+      fs.mkdirSync(dest, { recursive: true })
+      fs.writeFileSync(path.join(dest, 'SKILL.md'), md)
+      return path.join(dest, 'SKILL.md')
+    } },
+  { key: 'gemini', label: 'Gemini CLI', hint: '~/.gemini/GEMINI.md',
+    detect: () => fs.existsSync(home('.gemini')) || onPath('gemini'),
+    install: (md) => upsertBlock(home('.gemini', 'GEMINI.md'), stripFrontmatter(md)) },
+  { key: 'codex', label: 'Codex CLI', hint: '~/.codex/AGENTS.md',
+    detect: () => fs.existsSync(home('.codex')) || onPath('codex'),
+    install: (md) => upsertBlock(home('.codex', 'AGENTS.md'), stripFrontmatter(md)) },
+  { key: 'opencode', label: 'OpenCode', hint: '~/.config/opencode/AGENTS.md',
+    detect: () => fs.existsSync(home('.config', 'opencode')) || onPath('opencode'),
+    install: (md) => upsertBlock(home('.config', 'opencode', 'AGENTS.md'), stripFrontmatter(md)) },
+  { key: 'amp', label: 'Amp', hint: '~/.config/amp/AGENT.md',
+    detect: () => fs.existsSync(home('.config', 'amp')) || onPath('amp'),
+    install: (md) => upsertBlock(home('.config', 'amp', 'AGENT.md'), stripFrontmatter(md)) },
+  { key: 'project', label: 'This project', hint: './AGENTS.md (works with any agent that reads AGENTS.md)',
+    detect: () => fs.existsSync(path.resolve('AGENTS.md')),
+    install: (md) => upsertBlock(path.resolve('AGENTS.md'), stripFrontmatter(md)) },
+]
+
+async function fetchSkillMd() {
+  const bundled = path.join(path.dirname(fileURLToPath(import.meta.url)), 'skill', 'SKILL.md')
+  if (fs.existsSync(bundled)) return fs.readFileSync(bundled, 'utf8')
+  const res = await fetch('https://raw.githubusercontent.com/thianesh/waggle/main/skills/waggle/SKILL.md', { signal: AbortSignal.timeout(15000) })
+  if (!res.ok) throw new Error(`could not fetch the skill (HTTP ${res.status}) — copy skills/waggle/SKILL.md from https://github.com/thianesh/waggle manually`)
+  return res.text()
+}
+
+// minimal checkbox picker: ↑/↓ (or j/k) move, space toggles, a = all, enter confirms
+function picker(items) {
+  return new Promise((resolve) => {
+    let cur = 0
+    const sel = items.map((it) => it.preselect)
+    const render = (first) => {
+      if (!first) process.stdout.write(`\x1b[${items.length + 2}A`)
+      process.stdout.write('Install the waggle skill for which agents?\n')
+      items.forEach((it, i) => {
+        const ptr = i === cur ? '❯' : ' '
+        const box = sel[i] ? '\x1b[32m[x]\x1b[0m' : '[ ]'
+        const det = it.detected ? '  \x1b[33m(detected)\x1b[0m' : ''
+        process.stdout.write(`\x1b[2K${ptr} ${box} ${it.label}${det} — ${it.hint}\n`)
+      })
+      process.stdout.write('\x1b[2K  space toggle · a all · ↑/↓ move · enter confirm · q quit\n')
+    }
+    render(true)
+    process.stdin.setRawMode(true)
+    process.stdin.resume()
+    process.stdin.setEncoding('utf8')
+    const cleanup = () => { process.stdin.setRawMode(false); process.stdin.pause(); process.stdin.off('data', onKey) }
+    const onKey = (k) => {
+      if (k === '\u0003' || k === 'q') { cleanup(); resolve(null) }
+      else if (k === '\r' || k === '\n') { cleanup(); resolve(items.filter((_, i) => sel[i])) }
+      else if (k === ' ') { sel[cur] = !sel[cur]; render() }
+      else if (k === 'a') { const all = sel.every(Boolean); sel.fill(!all); render() }
+      else if (k === '\u001b[A' || k === 'k') { cur = (cur + items.length - 1) % items.length; render() }
+      else if (k === '\u001b[B' || k === 'j') { cur = (cur + 1) % items.length; render() }
+    }
+    process.stdin.on('data', onKey)
+  })
+}
+
 const [cmd, ...args] = argv
 
 function usage(code = 0) {
@@ -215,7 +309,12 @@ USAGE
                                             run it as a background task and react when it exits.
   waggle peers                          List agents on each hub
   waggle status                         Config + hub health
-  waggle skill                          Install the Claude Code skill (~/.claude/skills/waggle)
+  waggle skill [--agent a,b|--all|--print]
+                                        Install the agent skill. Interactive picker in a
+                                        terminal (detects Claude Code, Gemini, Codex,
+                                        OpenCode, Amp, project AGENTS.md); flags for scripts
+  waggle hook install|remove            Claude Code: inject peer EMERGENCY messages into the
+                                        model context with every prompt you send
   waggle profiles                       List profiles on this machine
 
 MULTIPLE SESSIONS (same machine)
@@ -509,22 +608,94 @@ try {
   }
 
   else if (cmd === 'skill') {
-    // Install the Claude Code skill. Prefer the copy shipped in the npm package;
-    // fall back to fetching from the repo (covers curl-installed standalone CLIs).
-    const dest = path.join(os.homedir(), '.claude', 'skills', 'waggle')
-    const bundled = path.join(path.dirname(fileURLToPath(import.meta.url)), 'skill', 'SKILL.md')
-    let content
-    if (fs.existsSync(bundled)) {
-      content = fs.readFileSync(bundled, 'utf8')
+    const md = await fetchSkillMd()
+    if (hasFlag('print')) { console.log(stripFrontmatter(md).trim()); process.exit(0) }
+    let chosen
+    const agentFlag = getFlag('agent', null)
+    if (agentFlag) {
+      const keys = agentFlag.split(',').map((s) => s.trim()).filter(Boolean)
+      const bad = keys.filter((k) => !SKILL_TARGETS.some((t) => t.key === k))
+      if (bad.length) { console.error(`Unknown agent(s): ${bad.join(', ')}. Known: ${SKILL_TARGETS.map((t) => t.key).join(', ')}`); process.exit(1) }
+      chosen = SKILL_TARGETS.filter((t) => keys.includes(t.key))
+    } else if (hasFlag('all')) {
+      chosen = SKILL_TARGETS.filter((t) => t.detect())
+      if (!chosen.length) { console.log('No agent CLIs detected.'); process.exit(0) }
+    } else if (process.stdin.isTTY && process.stdout.isTTY) {
+      const items = SKILL_TARGETS.map((t) => ({ ...t, detected: t.detect(), preselect: t.detect() }))
+      chosen = await picker(items)
+      if (chosen === null) { console.log('Aborted.'); process.exit(1) }
+      if (!chosen.length) { console.log('Nothing selected.'); process.exit(0) }
     } else {
-      const res = await fetch('https://raw.githubusercontent.com/thianesh/waggle/main/skills/waggle/SKILL.md', { signal: AbortSignal.timeout(15000) })
-      if (!res.ok) { console.error(`Could not fetch skill (HTTP ${res.status}). Check network, or copy skills/waggle/SKILL.md from https://github.com/thianesh/waggle manually.`); process.exit(1) }
-      content = await res.text()
+      // non-interactive (agent session, script): Claude Code only, the safe default
+      chosen = SKILL_TARGETS.filter((t) => t.key === 'claude')
     }
-    fs.mkdirSync(dest, { recursive: true })
-    fs.writeFileSync(path.join(dest, 'SKILL.md'), content)
-    console.log(`✓ Claude Code skill installed → ${path.join(dest, 'SKILL.md')}`)
-    console.log('New Claude Code sessions pick it up automatically.')
+    for (const t of chosen) {
+      try { console.log(`✓ ${t.label}: skill installed → ${t.install(md)}`) }
+      catch (e) { console.error(`✗ ${t.label}: ${e.message}`) }
+    }
+    if (chosen.some((t) => t.key === 'claude')) {
+      console.log('\nClaude Code picks the skill up automatically in new sessions.')
+      console.log('Optional: "waggle hook install" also injects peer EMERGENCY messages into')
+      console.log('your Claude Code context with every prompt you send.')
+    }
+  }
+
+  else if (cmd === 'hook' && args[0] === 'install') {
+    const file = home('.claude', 'settings.json')
+    let settings = {}
+    try { settings = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { /* new file */ }
+    settings.hooks ||= {}
+    const list = settings.hooks.UserPromptSubmit ||= []
+    const isOurs = (h) => h?.hooks?.some((x) => typeof x?.command === 'string' && x.command.includes('waggle') && x.command.includes('hook run'))
+    if (list.some(isOurs)) { console.log(`Hook already installed in ${file}.`); process.exit(0) }
+    const hookCmd = PROFILE ? `waggle --profile ${PROFILE} hook run` : 'waggle hook run'
+    list.push({ hooks: [{ type: 'command', command: hookCmd, timeout: 10 }] })
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, JSON.stringify(settings, null, 2))
+    console.log(`✓ UserPromptSubmit hook added to ${file}`)
+    console.log('Every prompt you send in Claude Code now also delivers new peer EMERGENCY')
+    console.log('messages directly into the model context, as part of your input.')
+    console.log('Undo anytime: waggle hook remove')
+  }
+
+  else if (cmd === 'hook' && args[0] === 'remove') {
+    const file = home('.claude', 'settings.json')
+    let settings = {}
+    try { settings = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { /* nothing to do */ }
+    const list = settings.hooks?.UserPromptSubmit
+    const isOurs = (h) => h?.hooks?.some((x) => typeof x?.command === 'string' && x.command.includes('waggle') && x.command.includes('hook run'))
+    if (!list?.some(isOurs)) { console.log('No waggle hook installed.'); process.exit(0) }
+    settings.hooks.UserPromptSubmit = list.filter((h) => !isOurs(h))
+    if (!settings.hooks.UserPromptSubmit.length) delete settings.hooks.UserPromptSubmit
+    fs.writeFileSync(file, JSON.stringify(settings, null, 2))
+    console.log(`✓ waggle hook removed from ${file}`)
+  }
+
+  else if (cmd === 'hook' && args[0] === 'run') {
+    // Runs from Claude Code's UserPromptSubmit hook: print any NEW emergency-tier
+    // peer messages. Uses its own cursor (hookCursor) so it never steals messages
+    // from the session's `waggle pull`. Must be fast and silent on failure —
+    // a broken hub should never block the user's prompt.
+    let out = ''
+    for (const hub of cfg.hubs) {
+      try {
+        const url = new URL('messages', hub.url.endsWith('/') ? hub.url : hub.url + '/')
+        url.searchParams.set('since', String(hub.hookCursor || 0))
+        url.searchParams.set('exclude_self', '1')
+        const res = await fetch(url, { headers: { authorization: `Bearer ${hub.token}` }, signal: AbortSignal.timeout(4000) })
+        if (!res.ok) continue
+        const data = await res.json()
+        hub.hookCursor = data.cursor
+        for (let m of data.messages) {
+          if (m.tier !== 'emergency') continue
+          m = materialize(hub, m)
+          out += `🚨 WAGGLE EMERGENCY from peer agent "${m.agent}" (hub ${hub.name}, ${fmtTime(m.ts)}, ${m.id}):\n${m.text}\n`
+          if (m.files?.length) out += `files: ${m.files.join(', ')}\n`
+        }
+      } catch { /* hub unreachable — stay silent, never block the prompt */ }
+    }
+    try { saveConfig(cfg) } catch { /* read-only fs — skip cursor persist */ }
+    if (out) process.stdout.write(out + 'Treat this as top priority: re-validate current assumptions and contracts against it before continuing, and surface it to the user.\n')
   }
 
   else usage(1)

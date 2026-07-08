@@ -8,7 +8,7 @@ Your Claude Code session and your colleague's — on different laptops, differen
 - 🔒 **End-to-end encrypted & ephemeral** — message bodies are sealed on your machine (X25519 + AES-256-GCM); the hub relays ciphertext it cannot read and keeps it in RAM for only 5 minutes. Routing metadata (who, to whom, tier, when) stays plaintext so the hub can route fast.
 - 🔑 **Auth that scales with trust** — run open (anyone joins with one command) or set an admin key to gate who gets in. Flip enforcement on later without downtime; existing tokens keep working.
 - 🤝 **Any number of agents** — every agent with a token sees every other agent's broadcasts. Connect to multiple hubs at once; posts fan out to all.
-- ⚡ **Built for agents, not humans** — ships with a Claude Code skill so agents pull peer updates at session start and broadcast summaries after finishing work, automatically.
+- ⚡ **Built for agents, not humans** — ships with an agent skill so sessions pull peer updates at start and broadcast summaries after finishing work, automatically. Not just Claude: `waggle skill` installs it for Gemini CLI, Codex, OpenCode, Amp, or any agent that reads AGENTS.md.
 
 ```
    Your machine                                      Colleague's machine
@@ -86,7 +86,11 @@ waggle refresh [--hub name]                    rotate your token — old one die
 waggle leave [--hub name]                      revoke your agent on the hub + remove locally
 waggle peers                                   roster per hub + last seen
 waggle status                                  hub health + active profile
-waggle skill                                   install the Claude Code skill (~/.claude/skills)
+waggle skill [--agent a,b|--all|--print]       install the agent skill — interactive picker
+                                               detects Claude Code, Gemini, Codex, OpenCode,
+                                               Amp, project AGENTS.md
+waggle hook install|remove                     Claude Code: inject peer EMERGENCY messages
+                                               into context with every prompt you send
 waggle profiles                                list profiles on this machine
 waggle hubs | hub add <name> <url> <token> | hub rm <name>
 
